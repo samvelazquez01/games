@@ -1481,7 +1481,7 @@
     }
 
     let difficulty = 'EXPERTO';
-    if (highestWeight >= TECHNIQUE_WEIGHTS['Jellyfish'] || totalScore >= 2500 || techniqueCounts['XY-Chain'] || techniqueCounts['Forcing Chain']) {
+    if (highestWeight >= TECHNIQUE_WEIGHTS['Jellyfish'] || totalScore >= 3000 || techniqueCounts['XY-Chain'] || techniqueCounts['Forcing Chain'] || techniqueCounts['Alternating Inference Chain'] || techniqueCounts['Finned Swordfish']) {
       difficulty = 'IMPOSIBLE';
     } else if (highestWeight >= TECHNIQUE_WEIGHTS['Swordfish'] || totalScore >= 1200 || highestWeight >= TECHNIQUE_WEIGHTS['XYZ-Wing'] || highestWeight >= TECHNIQUE_WEIGHTS['Skyscraper']) {
       difficulty = 'EXTREMO';
@@ -1608,11 +1608,15 @@
       targetDifficulty = 'EXPERTO';
     }
 
-    const maxCluesTarget = targetDifficulty === 'IMPOSIBLE' ? 24 : targetDifficulty === 'EXTREMO' ? 26 : 28;
-    const minCluesTarget = targetDifficulty === 'IMPOSIBLE' ? 20 : targetDifficulty === 'EXTREMO' ? 21 : 23;
+    // Ultra-challenging clue boundaries:
+    // Experto: 24 - 28 clues
+    // Extremo: 21 - 25 clues
+    // Imposible: 17 - 22 clues (minimum possible mathematical range)
+    const maxCluesTarget = targetDifficulty === 'IMPOSIBLE' ? 22 : targetDifficulty === 'EXTREMO' ? 25 : 28;
+    const minCluesTarget = targetDifficulty === 'IMPOSIBLE' ? 17 : targetDifficulty === 'EXTREMO' ? 21 : 23;
 
     let attempts = 0;
-    const maxGenerationAttempts = 40;
+    const maxGenerationAttempts = targetDifficulty === 'IMPOSIBLE' ? 60 : 40;
 
     while (attempts < maxGenerationAttempts) {
       attempts++;
@@ -1656,9 +1660,9 @@
           if (targetDifficulty === 'EXPERTO') {
             meetsDifficulty = analysis.difficulty === 'EXPERTO' && analysis.difficultyScore >= 400;
           } else if (targetDifficulty === 'EXTREMO') {
-            meetsDifficulty = analysis.difficulty === 'EXTREMO' || (analysis.difficulty === 'EXPERTO' && analysis.difficultyScore >= 950);
+            meetsDifficulty = analysis.difficulty === 'EXTREMO' || (analysis.difficulty === 'EXPERTO' && analysis.difficultyScore >= 1100);
           } else if (targetDifficulty === 'IMPOSIBLE') {
-            meetsDifficulty = analysis.difficulty === 'IMPOSIBLE' || (analysis.difficulty === 'EXTREMO' && analysis.difficultyScore >= 1800);
+            meetsDifficulty = analysis.difficulty === 'IMPOSIBLE' || (analysis.difficultyScore >= 2600 && currentClues <= 22);
           }
 
           if (meetsDifficulty) {

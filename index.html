@@ -52,6 +52,20 @@
         </div>
 
         <div class="input-group">
+          <label class="input-label">Modo Multijugador</label>
+          <div class="game-mode-grid">
+            <div class="mode-card mode-coop selected" data-mode="COOP">
+              <span class="mode-name">🤝 En Pareja</span>
+              <span class="mode-desc">Tablero compartido en vivo (3 errores en equipo)</span>
+            </div>
+            <div class="mode-card mode-versus" data-mode="VERSUS">
+              <span class="mode-name">⚔️ Duelo</span>
+              <span class="mode-desc">Tableros individuales (Carrera contra el rival)</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="input-group">
           <label class="input-label">Nivel de Dificultad</label>
           <div class="difficulty-grid">
             <div class="diff-card diff-experto selected" data-diff="EXPERTO">
@@ -64,7 +78,7 @@
             </div>
             <div class="diff-card diff-imposible" data-diff="IMPOSIBLE">
               <span class="diff-name" style="color: var(--accent-purple);">IMPOSIBLE</span>
-              <span class="diff-tag">Cadenas lógicas</span>
+              <span class="diff-tag">17-22 pistas y cadenas</span>
             </div>
           </div>
         </div>
@@ -74,11 +88,11 @@
           <span>🎯</span> JUGAR EN SOLITARIO
         </button>
 
-        <div class="divider">O MULTIJUGADOR EN TIEMPO REAL</div>
+        <div class="divider">O MULTIJUGADOR ONLINE</div>
 
         <!-- Create Room -->
         <button id="btn-create-room" class="btn btn-primary">
-          <span>⚔️</span> CREAR SALA MULTIJUGADOR
+          <span id="btn-create-icon">🤝</span> <span id="btn-create-text">CREAR SALA EN PAREJA</span>
         </button>
 
         <!-- Join Room -->
@@ -103,7 +117,10 @@
       <div class="glass-card">
         <div style="display: flex; justify-content: space-between; align-items: center;">
           <h2 class="card-title"><span>👥</span> Sala de Espera</h2>
-          <span id="waiting-diff-badge" class="difficulty-badge diff-EXPERTO">EXPERTO</span>
+          <div style="display: flex; gap: 6px; align-items: center;">
+            <span id="waiting-mode-badge" class="difficulty-badge" style="background: rgba(16, 185, 129, 0.2); color: var(--accent-emerald); border: 1px solid var(--accent-emerald);">🤝 COOP</span>
+            <span id="waiting-diff-badge" class="difficulty-badge diff-EXPERTO">EXPERTO</span>
+          </div>
         </div>
 
         <div class="room-code-display">
@@ -129,8 +146,8 @@
 
           <div id="slot-guest-card" class="player-slot-card">
             <div class="player-avatar">🎮</div>
-            <div id="slot-guest-name" class="player-slot-name">Esperando jugador...</div>
-            <span class="player-badge badge-waiting">Rival</span>
+            <div id="slot-guest-name" class="player-slot-name">Esperando pareja / jugador...</div>
+            <span class="player-badge badge-waiting">Pareja</span>
           </div>
         </div>
 
@@ -153,14 +170,20 @@
       <!-- Game HUD -->
       <div class="game-hud">
         <div class="hud-top-bar">
-          <span id="game-diff-badge" class="difficulty-badge diff-EXPERTO">EXPERTO</span>
+          <div style="display: flex; gap: 6px; align-items: center;">
+            <span id="game-diff-badge" class="difficulty-badge diff-EXPERTO">EXPERTO</span>
+            <span id="game-mode-badge" class="difficulty-badge" style="background: rgba(16, 185, 129, 0.2); color: var(--accent-emerald); border: 1px solid var(--accent-emerald);">🤝 COOP</span>
+          </div>
+
           <div class="timer-box">
             <span class="timer-icon">⏱️</span>
             <span id="game-timer">00:00</span>
           </div>
-          <button id="btn-mode-toggle" class="btn" style="padding: 4px 10px; font-size: 12px;">
-            <span class="action-label">Competitivo</span>
-          </button>
+
+          <div id="hud-errors-box" class="errors-hud-box">
+            <span>❌</span>
+            <span id="hud-errors-count">0 / 3</span>
+          </div>
         </div>
 
         <!-- Duel Progress Bars -->

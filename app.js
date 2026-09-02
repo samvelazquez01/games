@@ -1,6 +1,7 @@
 /**
  * APP CONTROLLER & UI INTERACTION MANAGER
- * Handles views, user inputs, sound synthesis, undo/redo, pencil notes, and multiplayer events.
+ * Handles views, user inputs, sound synthesis, undo/redo, pencil notes,
+ * 3-strike error system, and COOPERATIVE / VERSUS multiplayer modes.
  */
 
 (function () {
@@ -50,9 +51,10 @@
       isEnabled: () => enabled,
       select: () => playTone(600, 'sine', 0.04, 0.08),
       place: () => playTone(880, 'triangle', 0.09, 0.12),
+      partnerPlace: () => playTone(1046.5, 'sine', 0.12, 0.15),
       erase: () => playTone(300, 'sine', 0.05, 0.08),
       pencil: () => playTone(520, 'sine', 0.03, 0.05),
-      error: () => playTone(180, 'sawtooth', 0.18, 0.2),
+      error: () => playTone(180, 'sawtooth', 0.22, 0.25),
       victory: () => {
         if (!enabled) return;
         const notes = [523.25, 659.25, 783.99, 1046.5];
@@ -73,7 +75,7 @@
   // --- APPLICATION STATE ---
   const State = {
     mode: 'SOLO', // 'SOLO' | 'MULTIPLAYER'
-    gameSubMode: 'COMPETITIVO', // 'COMPETITIVO' | 'NORMAL'
+    multiplayerGameMode: 'COOP', // 'COOP' | 'VERSUS'
     difficulty: 'EXPERTO', // 'EXPERTO' | 'EXTREMO' | 'IMPOSIBLE'
     initialBoard: new Uint8Array(81),
     currentBoard: new Uint8Array(81),
@@ -87,6 +89,7 @@
     startedAt: null,
     elapsedSeconds: 0,
     errorsCount: 0,
+    maxErrors: 3,
     isGameActive: false,
     emptyCellsToFill: 0,
     worker: null,
@@ -109,9 +112,12 @@
 
     // Lobby
     DOM.inputNickname = document.getElementById('input-nickname');
+    DOM.modeCards = document.querySelectorAll('.mode-card');
     DOM.diffCards = document.querySelectorAll('.diff-card');
     DOM.btnSoloPlay = document.getElementById('btn-solo-play');
     DOM.btnCreateRoom = document.getElementById('btn-create-room');
+    DOM.btnCreateIcon = document.getElementById('btn-create-icon');
+    DOM.btnCreateText = document.getElementById('btn-create-text');
     DOM.inputJoinCode = document.getElementById('input-join-code');
     DOM.btnJoinRoom = document.getElementById('btn-join-room');
 
@@ -120,6 +126,7 @@
     DOM.btnCopyCode = document.getElementById('btn-copy-code');
     DOM.btnShareRoom = document.getElementById('btn-share-room');
     DOM.waitingDiffBadge = document.getElementById('waiting-diff-badge');
+    DOM.waitingModeBadge = document.getElementById('waiting-mode-badge');
     DOM.slotHostName = document.getElementById('slot-host-name');
     DOM.slotGuestName = document.getElementById('slot-guest-name');
     DOM.slotGuestCard = document.getElementById('slot-guest-card');
@@ -128,7 +135,10 @@
 
     // Game HUD
     DOM.gameDiffBadge = document.getElementById('game-diff-badge');
+    DOM.gameModeBadge = document.getElementById('game-mode-badge');
     DOM.gameTimer = document.getElementById('game-timer');
+    DOM.hudErrorsBox = document.getElementById('hud-errors-box');
+    DOM.hudErrorsCount = document.getElementById('hud-errors-count');
     DOM.myProgressFill = document.getElementById('my-progress-fill');
     DOM.myProgressText = document.getElementById('my-progress-text');
     DOM.myNameTag = document.getElementById('my-name-tag');
@@ -144,7 +154,6 @@
     DOM.btnRedo = document.getElementById('btn-redo');
     DOM.btnErase = document.getElementById('btn-erase');
     DOM.btnPencil = document.getElementById('btn-pencil');
-    DOM.btnCompetitiveMode = document.getElementById('btn-mode-toggle');
     DOM.btnAbandonGame = document.getElementById('btn-abandon-game');
     DOM.numpadButtons = document.querySelectorAll('.num-btn');
 
@@ -252,7 +261,6 @@
         id: Date.now()
       });
     } else {
-      // Synchronous fallback in setTimeout to allow loading UI render
       setTimeout(() => {
         try {
           const result = window.SudokuEngine.generatePuzzle(difficulty);
@@ -315,7 +323,7 @@
       const c = i % 9;
       const b = Math.floor(r / 3) * 3 + Math.floor(c / 3);
 
-      cell.classList.remove('selected', 'highlighted', 'same-digit', 'initial', 'conflict');
+      cell.classList.remove('selected', 'highlighted', 'same-digit', 'initial');
 
       if (isInitial) {
         cell.classList.add('initial');
@@ -329,13 +337,6 @@
         }
         if (selectedVal !== 0 && val === selectedVal) {
           cell.classList.add('same-digit');
-        }
-      }
-
-      // Check conflict in normal mode
-      if (State.gameSubMode === 'NORMAL' && val !== 0 && !isInitial) {
-        if (State.solutionBoard[i] !== 0 && val !== State.solutionBoard[i]) {
-          cell.classList.add('conflict');
         }
       }
 
@@ -369,6 +370,7 @@
 
     updateNumpadState();
     updateProgressUI();
+    updateErrorsUI();
   }
 
   function updateNumpadState() {
@@ -384,6 +386,12 @@
     });
   }
 
+  function updateErrorsUI() {
+    if (DOM.hudErrorsCount) {
+      DOM.hudErrorsCount.textContent = `${State.errorsCount} / ${State.maxErrors}`;
+    }
+  }
+
   function handleCellClick(index) {
     if (!State.isGameActive) return;
     State.selectedCell = index;
@@ -391,13 +399,13 @@
     updateBoardUI();
   }
 
-  // --- DIGIT INPUT & GAMEPLAY LOGIC ---
+  // --- DIGIT INPUT & STRICT 3-STRIKE ERROR VALIDATION ---
   function placeDigit(digit) {
     if (!State.isGameActive || State.selectedCell === null) return;
     const idx = State.selectedCell;
 
-    // Initial clues cannot be edited
-    if (State.initialBoard[idx] !== 0) return;
+    // Initial clues or already filled cells cannot be edited
+    if (State.initialBoard[idx] !== 0 || State.currentBoard[idx] !== 0) return;
 
     if (State.pencilMode) {
       // Toggle note / candidate
@@ -412,17 +420,59 @@
       return;
     }
 
-    // Normal digit placement
-    const currentVal = State.currentBoard[idx];
-    if (currentVal === digit) return; // already set
+    // STRICT VALIDATION AGAINST SOLUTION
+    const correctVal = State.solutionBoard[idx];
 
+    if (correctVal !== 0 && digit !== correctVal) {
+      // INCORRECT DIGIT -> STRIKE ERROR!
+      State.errorsCount++;
+      SoundFX.error();
+
+      // Visual feedback on cell
+      const cells = DOM.sudokuGrid.querySelectorAll('.cell');
+      if (cells[idx]) {
+        cells[idx].classList.add('conflict');
+        setTimeout(() => cells[idx].classList.remove('conflict'), 500);
+      }
+
+      // Shake error HUD
+      if (DOM.hudErrorsBox) {
+        DOM.hudErrorsBox.classList.add('shake');
+        setTimeout(() => DOM.hudErrorsBox.classList.remove('shake'), 400);
+      }
+
+      updateErrorsUI();
+      showToast(`¡Número incorrecto para esta casilla! (${State.errorsCount}/${State.maxErrors})`, '❌');
+
+      // Sync error across multiplayer
+      if (State.mode === 'MULTIPLAYER') {
+        if (State.multiplayerGameMode === 'COOP') {
+          window.MultiplayerService.reportCoopError();
+        } else {
+          window.MultiplayerService.reportVersusError(State.errorsCount);
+        }
+      }
+
+      // Check if 3 strikes reached -> DEFEAT
+      if (State.errorsCount >= State.maxErrors) {
+        State.isGameActive = false;
+        stopTimer();
+        showGameOverModal({
+          isWinner: false,
+          isDefeatByErrors: true,
+          finishTime: State.elapsedSeconds
+        });
+      }
+
+      return;
+    }
+
+    // CORRECT DIGIT PLACEMENT!
     pushUndoState();
     State.currentBoard[idx] = digit;
     State.candidatesGrid[idx].clear();
 
     // Auto candidate elimination from peers
-    const peers = window.SudokuEngine ? window.SudokuEngine.computeCandidateGrid : null;
-    // Remove digit from candidate list of peers in row, col, box
     const r = Math.floor(idx / 9);
     const c = idx % 9;
     const b = Math.floor(r / 3) * 3 + Math.floor(c / 3);
@@ -439,14 +489,15 @@
     }
 
     SoundFX.place();
+    updateBoardUI();
 
-    if (State.gameSubMode === 'NORMAL' && State.solutionBoard[idx] !== 0 && digit !== State.solutionBoard[idx]) {
-      State.errorsCount++;
-      SoundFX.error();
+    // If in Coop mode, broadcast move to partner
+    if (State.mode === 'MULTIPLAYER' && State.multiplayerGameMode === 'COOP') {
+      window.MultiplayerService.makeCoopMove(idx, digit);
+    } else {
+      broadcastProgress();
     }
 
-    updateBoardUI();
-    broadcastProgress();
     checkWinCondition();
   }
 
@@ -455,13 +506,12 @@
     const idx = State.selectedCell;
     if (State.initialBoard[idx] !== 0) return;
 
-    if (State.currentBoard[idx] !== 0 || State.candidatesGrid[idx].size > 0) {
+    // In strict mode, correct numbers once placed are locked, but pencil notes can be erased
+    if (State.candidatesGrid[idx].size > 0) {
       pushUndoState();
-      State.currentBoard[idx] = 0;
       State.candidatesGrid[idx].clear();
       SoundFX.erase();
       updateBoardUI();
-      broadcastProgress();
     }
   }
 
@@ -551,11 +601,14 @@
     const percent = totalEmpty > 0 ? Math.min(100, Math.round((filled / totalEmpty) * 100)) : 0;
 
     if (DOM.myProgressFill) DOM.myProgressFill.style.width = percent + '%';
-    if (DOM.myProgressText) DOM.myProgressText.textContent = `${percent}% (${filled}/${totalEmpty})`;
+    if (DOM.myProgressText) {
+      const label = State.multiplayerGameMode === 'COOP' ? 'Equipo' : 'Progreso';
+      DOM.myProgressText.textContent = `${percent}% (${filled}/${totalEmpty})`;
+    }
   }
 
   function broadcastProgress() {
-    if (State.mode !== 'MULTIPLAYER') return;
+    if (State.mode !== 'MULTIPLAYER' || State.multiplayerGameMode !== 'VERSUS') return;
     let filled = 0;
     for (let i = 0; i < 81; i++) {
       if (State.initialBoard[i] === 0 && State.currentBoard[i] !== 0) {
@@ -569,31 +622,10 @@
 
   // --- VICTORY & GAME OVER ---
   async function checkWinCondition() {
-    // Check if any cell is empty
     for (let i = 0; i < 81; i++) {
       if (State.currentBoard[i] === 0) return;
     }
 
-    // Check conflicts
-    for (let i = 0; i < 81; i++) {
-      const val = State.currentBoard[i];
-      const r = Math.floor(i / 9);
-      const c = i % 9;
-      const b = Math.floor(r / 3) * 3 + Math.floor(c / 3);
-      for (let j = 0; j < 81; j++) {
-        if (i !== j) {
-          const pr = Math.floor(j / 9);
-          const pc = j % 9;
-          const pb = Math.floor(pr / 3) * 3 + Math.floor(pc / 3);
-          if ((pr === r || pc === c || pb === b) && State.currentBoard[j] === val) {
-            showToast('El tablero está lleno pero contiene números en conflicto.', '⚠️');
-            return;
-          }
-        }
-      }
-    }
-
-    // Board completely and correctly filled!
     State.isGameActive = false;
     stopTimer();
 
@@ -618,16 +650,27 @@
   function showGameOverModal(data) {
     if (!DOM.modalGameOver) return;
     const isWinner = data.isWinner;
+    const isDefeatByErrors = data.isDefeatByErrors;
+    const isCoop = State.mode === 'MULTIPLAYER' && State.multiplayerGameMode === 'COOP';
 
-    if (isWinner) {
+    if (isDefeatByErrors) {
+      DOM.modalGameOverIcon.textContent = '💀';
+      DOM.modalGameOverTitle.textContent = isCoop ? '¡DERROTA EN EQUIPO!' : 'PARTIDA PERDIDA';
+      DOM.modalGameOverSub.textContent = isCoop
+        ? 'Han alcanzado el límite de 3 errores compartidos.'
+        : 'Has cometido 3 errores. ¡Más suerte en la próxima!';
+      SoundFX.defeat();
+    } else if (isWinner) {
       DOM.modalGameOverIcon.textContent = '🏆';
-      DOM.modalGameOverTitle.textContent = '¡HAS GANADO!';
-      DOM.modalGameOverSub.textContent = `¡Felicitaciones! Has resuelto el Sudoku con maestría.`;
+      DOM.modalGameOverTitle.textContent = isCoop ? '¡VICTORIA EN EQUIPO!' : '¡HAS GANADO!';
+      DOM.modalGameOverSub.textContent = isCoop
+        ? '¡Increíble trabajo en pareja! Han completado el Sudoku juntos.'
+        : '¡Felicitaciones! Has resuelto el Sudoku con maestría.';
       SoundFX.victory();
     } else {
       DOM.modalGameOverIcon.textContent = '🥈';
       DOM.modalGameOverTitle.textContent = 'PARTIDA TERMINADA';
-      DOM.modalGameOverSub.textContent = `${data.winnerName || 'El rival'} resolvió el Sudoku primero.`;
+      DOM.modalGameOverSub.textContent = `${data.winnerName || 'El rival'} terminó el Sudoku primero.`;
       SoundFX.defeat();
     }
 
@@ -646,16 +689,34 @@
   // --- START GAME WORKFLOW ---
   function startNewGame(puzzleData, mode = 'SOLO', roomData = null) {
     State.mode = mode;
+    State.multiplayerGameMode = (roomData && roomData.gameMode) ? roomData.gameMode : State.multiplayerGameMode;
     State.difficulty = puzzleData.difficulty || 'EXPERTO';
     State.initialBoard = window.SudokuEngine.parseBoard(puzzleData.puzzle);
     State.currentBoard = new Uint8Array(State.initialBoard);
-    State.solutionBoard = puzzleData.solution ? window.SudokuEngine.parseBoard(puzzleData.solution) : new Uint8Array(81);
+
+    // Compute canonical solution locally if not provided
+    if (puzzleData.solution) {
+      State.solutionBoard = window.SudokuEngine.parseBoard(puzzleData.solution);
+    } else {
+      const solRes = window.SudokuEngine.solveUnique(State.initialBoard);
+      State.solutionBoard = solRes.solution ? solRes.solution : new Uint8Array(81);
+    }
+
+    // In COOP mode, if room already has shared board with filled cells, initialize with it
+    if (roomData && roomData.gameMode === 'COOP' && roomData.sharedBoard) {
+      for (let i = 0; i < 81; i++) {
+        if (roomData.sharedBoard[i] && roomData.sharedBoard[i] !== 0) {
+          State.currentBoard[i] = roomData.sharedBoard[i];
+        }
+      }
+    }
+
     State.candidatesGrid = Array.from({ length: 81 }, () => new Set());
     State.selectedCell = null;
     State.pencilMode = false;
     State.undoStack = [];
     State.redoStack = [];
-    State.errorsCount = 0;
+    State.errorsCount = (roomData && roomData.gameMode === 'COOP' && roomData.sharedErrors) ? roomData.sharedErrors : 0;
     State.isGameActive = true;
     State.metadata = {
       difficultyScore: puzzleData.difficultyScore || 0,
@@ -668,20 +729,39 @@
     }
     State.emptyCellsToFill = emptyCount;
 
-    // Update HUD
+    // Update HUD Badges
     if (DOM.gameDiffBadge) {
       DOM.gameDiffBadge.textContent = State.difficulty;
       DOM.gameDiffBadge.className = `difficulty-badge diff-${State.difficulty}`;
     }
 
-    if (DOM.myNameTag) DOM.myNameTag.textContent = window.MultiplayerService.getPlayerName();
+    if (DOM.gameModeBadge) {
+      if (mode === 'MULTIPLAYER') {
+        DOM.gameModeBadge.style.display = 'inline-block';
+        if (State.multiplayerGameMode === 'COOP') {
+          DOM.gameModeBadge.textContent = '🤝 COOP';
+          DOM.gameModeBadge.style.borderColor = 'var(--accent-emerald)';
+          DOM.gameModeBadge.style.color = 'var(--accent-emerald)';
+        } else {
+          DOM.gameModeBadge.textContent = '⚔️ DUELO';
+          DOM.gameModeBadge.style.borderColor = 'var(--primary)';
+          DOM.gameModeBadge.style.color = 'var(--primary)';
+        }
+      } else {
+        DOM.gameModeBadge.style.display = 'none';
+      }
+    }
 
-    if (mode === 'MULTIPLAYER') {
+    if (DOM.myNameTag) {
+      DOM.myNameTag.textContent = State.multiplayerGameMode === 'COOP' ? 'Tablero Compartido' : window.MultiplayerService.getPlayerName();
+    }
+
+    if (mode === 'MULTIPLAYER' && State.multiplayerGameMode === 'VERSUS') {
       DOM.opponentProgressContainer.style.display = 'flex';
       DOM.btnAbandonGame.textContent = 'Abandonar partida';
     } else {
       DOM.opponentProgressContainer.style.display = 'none';
-      DOM.btnAbandonGame.textContent = 'Salir al menú';
+      DOM.btnAbandonGame.textContent = mode === 'MULTIPLAYER' ? 'Salir de la sala' : 'Salir al menú';
     }
 
     buildBoardGrid();
@@ -704,11 +784,12 @@
         DOM.waitingDiffBadge.textContent = room.difficulty;
         DOM.waitingDiffBadge.className = `difficulty-badge diff-${room.difficulty}`;
       }
+      if (DOM.waitingModeBadge) {
+        DOM.waitingModeBadge.textContent = room.gameMode === 'COOP' ? '🤝 COOP' : '⚔️ DUELO';
+      }
 
       const players = room.players || {};
       const pKeys = Object.keys(players);
-      const myUid = MP.getPlayerUid();
-
       const hostUid = room.hostId;
       const guestUid = pKeys.find(id => id !== hostUid);
 
@@ -723,12 +804,70 @@
           DOM.btnStartMultiplayer.style.display = 'flex';
         }
       } else {
-        if (DOM.slotGuestName) DOM.slotGuestName.textContent = 'Esperando jugador...';
+        if (DOM.slotGuestName) {
+          DOM.slotGuestName.textContent = room.gameMode === 'COOP' ? 'Esperando pareja...' : 'Esperando rival...';
+        }
         if (DOM.slotGuestCard) DOM.slotGuestCard.classList.remove('ready');
         if (DOM.btnStartMultiplayer) DOM.btnStartMultiplayer.style.display = 'none';
       }
     });
 
+    // COOP: Partner made a move!
+    MP.on('coop_move_received', move => {
+      if (State.mode === 'MULTIPLAYER' && State.multiplayerGameMode === 'COOP') {
+        const { cellIndex, digit, playerName } = move;
+        if (State.currentBoard[cellIndex] !== digit) {
+          State.currentBoard[cellIndex] = digit;
+          State.candidatesGrid[cellIndex].clear();
+
+          // Auto candidate elimination from peers
+          const r = Math.floor(cellIndex / 9);
+          const c = cellIndex % 9;
+          const b = Math.floor(r / 3) * 3 + Math.floor(c / 3);
+          for (let i = 0; i < 81; i++) {
+            if (i !== cellIndex && State.currentBoard[i] === 0) {
+              const pr = Math.floor(i / 9);
+              const pc = i % 9;
+              const pb = Math.floor(pr / 3) * 3 + Math.floor(pc / 3);
+              if (pr === r || pc === c || pb === b) {
+                State.candidatesGrid[i].delete(digit);
+              }
+            }
+          }
+
+          SoundFX.partnerPlace();
+          updateBoardUI();
+
+          // Partner flash animation
+          const cells = DOM.sudokuGrid.querySelectorAll('.cell');
+          if (cells[cellIndex]) {
+            cells[cellIndex].classList.add('partner-action');
+            setTimeout(() => cells[cellIndex].classList.remove('partner-action'), 1200);
+          }
+
+          showToast(`🤝 ${playerName || 'Tu pareja'} colocó el ${digit}`, '✨');
+          checkWinCondition();
+        }
+      }
+    });
+
+    // COOP: Shared errors update
+    MP.on('coop_errors_update', data => {
+      if (State.mode === 'MULTIPLAYER' && State.multiplayerGameMode === 'COOP') {
+        if (data.errors > State.errorsCount) {
+          SoundFX.error();
+          if (DOM.hudErrorsBox) {
+            DOM.hudErrorsBox.classList.add('shake');
+            setTimeout(() => DOM.hudErrorsBox.classList.remove('shake'), 400);
+          }
+          showToast(`Error de equipo cometido (${data.errors}/${data.maxErrors})`, '⚠️');
+        }
+        State.errorsCount = data.errors;
+        updateErrorsUI();
+      }
+    });
+
+    // VERSUS: Opponent update
     MP.on('opponent_update', opp => {
       if (!opp) return;
       if (DOM.opponentNameTag) DOM.opponentNameTag.textContent = opp.name || 'Rival';
@@ -743,14 +882,14 @@
       if (!State.isGameActive || State.mode !== 'MULTIPLAYER') {
         const puzzleData = {
           puzzle: room.puzzle,
-          solution: null, // solution protected
+          solution: null,
           difficulty: room.difficulty,
           cluesCount: room.cluesCount,
           difficultyScore: room.difficultyScore,
           highestTechnique: room.highestTechnique
         };
         startNewGame(puzzleData, 'MULTIPLAYER', room);
-        showToast('¡La partida ha comenzado!', '⚔️');
+        showToast(room.gameMode === 'COOP' ? '¡Partida en pareja iniciada!' : '¡Duelo iniciado!', '⚔️');
       }
     });
 
@@ -807,6 +946,24 @@
       });
     }
 
+    // Multiplayer Mode selection (COOP vs VERSUS)
+    DOM.modeCards.forEach(card => {
+      card.addEventListener('click', () => {
+        DOM.modeCards.forEach(c => c.classList.remove('selected'));
+        card.classList.add('selected');
+        State.multiplayerGameMode = card.dataset.mode;
+        SoundFX.select();
+
+        if (State.multiplayerGameMode === 'COOP') {
+          if (DOM.btnCreateIcon) DOM.btnCreateIcon.textContent = '🤝';
+          if (DOM.btnCreateText) DOM.btnCreateText.textContent = 'CREAR SALA EN PAREJA';
+        } else {
+          if (DOM.btnCreateIcon) DOM.btnCreateIcon.textContent = '⚔️';
+          if (DOM.btnCreateText) DOM.btnCreateText.textContent = 'CREAR SALA DUELO';
+        }
+      });
+    });
+
     // Difficulty selection
     DOM.diffCards.forEach(card => {
       card.addEventListener('click', () => {
@@ -861,12 +1018,13 @@
             return;
           }
           try {
-            const { roomId } = await window.MultiplayerService.createRoom(State.difficulty, puzzleData);
+            const { roomId } = await window.MultiplayerService.createRoom(State.difficulty, puzzleData, State.multiplayerGameMode);
             DOM.displayRoomCode.textContent = roomId;
             DOM.waitingDiffBadge.textContent = State.difficulty;
             DOM.waitingDiffBadge.className = `difficulty-badge diff-${State.difficulty}`;
+            DOM.waitingModeBadge.textContent = State.multiplayerGameMode === 'COOP' ? '🤝 COOP' : '⚔️ DUELO';
             DOM.slotHostName.textContent = window.MultiplayerService.getPlayerName();
-            DOM.slotGuestName.textContent = 'Esperando jugador...';
+            DOM.slotGuestName.textContent = State.multiplayerGameMode === 'COOP' ? 'Esperando pareja...' : 'Esperando rival...';
             DOM.slotGuestCard.classList.remove('ready');
             DOM.btnStartMultiplayer.style.display = 'none';
             showView('waiting');
@@ -913,6 +1071,7 @@
             DOM.displayRoomCode.textContent = roomId;
             DOM.waitingDiffBadge.textContent = roomData.difficulty;
             DOM.waitingDiffBadge.className = `difficulty-badge diff-${roomData.difficulty}`;
+            DOM.waitingModeBadge.textContent = roomData.gameMode === 'COOP' ? '🤝 COOP' : '⚔️ DUELO';
             showView('waiting');
           }
         } catch (e) {
@@ -993,16 +1152,6 @@
       });
     }
 
-    if (DOM.btnCompetitiveMode) {
-      DOM.btnCompetitiveMode.addEventListener('click', () => {
-        State.gameSubMode = State.gameSubMode === 'COMPETITIVO' ? 'NORMAL' : 'COMPETITIVO';
-        DOM.btnCompetitiveMode.classList.toggle('active', State.gameSubMode === 'NORMAL');
-        DOM.btnCompetitiveMode.querySelector('.action-label').textContent = State.gameSubMode === 'COMPETITIVO' ? 'Competitivo' : 'Normal';
-        showToast(State.gameSubMode === 'COMPETITIVO' ? 'Modo Competitivo: Errores ocultos' : 'Modo Normal: Verificación activa', '🎯');
-        updateBoardUI();
-      });
-    }
-
     if (DOM.btnAbandonGame) {
       DOM.btnAbandonGame.addEventListener('click', () => {
         if (confirm('¿Estás seguro de que deseas salir de la partida?')) {
@@ -1056,13 +1205,11 @@
     window.addEventListener('keydown', e => {
       if (!State.isGameActive) return;
 
-      // Digits 1-9
       if (e.key >= '1' && e.key <= '9') {
         placeDigit(parseInt(e.key, 10));
       } else if (e.key === 'Backspace' || e.key === 'Delete' || e.key === '0') {
         eraseSelectedCell();
       } else if (e.key === ' ' || e.key.toLowerCase() === 'n') {
-        // Space or 'N' toggles note mode
         DOM.btnPencil.click();
       } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z') {
         e.preventDefault();
@@ -1072,7 +1219,6 @@
         e.preventDefault();
         redo();
       } else if (e.key.startsWith('Arrow') && State.selectedCell !== null) {
-        // Arrow Navigation
         e.preventDefault();
         let r = Math.floor(State.selectedCell / 9);
         let c = State.selectedCell % 9;
@@ -1104,9 +1250,7 @@
     setupMultiplayerListeners();
     initEvents();
 
-    // Check if Firebase is configured
     window.FirebaseService.initFirebase();
-
     showView('lobby');
   }
 

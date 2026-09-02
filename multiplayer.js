@@ -1,13 +1,11 @@
 /**
  * MULTIPLAYER SYNCHRONIZATION ENGINE WITH FIREBASE REALTIME DATABASE
  *
- * Manages:
- * - Room creation and joining with 6-char codes.
- * - Anonymous authentication & persistent player identity.
- * - Live state synchronization (Room, Players, Progress, Timer).
- * - Millisecond-accurate server time synchronization (.info/serverTimeOffset).
- * - Real-time presence detection (.info/connected & onDisconnect).
- * - Anti-cheat SHA-256 victory validation.
+ * Supports:
+ * - 🤝 MODO COOPERATIVO (En Parejas): Tablero compartido en vivo, errores compartidos (3 max),
+ *   sincronización de celdas y notas en tiempo real.
+ * - ⚔️ MODO DUELO (Versus): Tableros independientes, carrera por terminar primero, 3 errores = descalificación.
+ * - Sincronización de presencia, cronómetro por offset de servidor y anticheat SHA-256.
  */
 
 (function (global) {
@@ -21,6 +19,7 @@
   let currentRoomData = null;
   let isHost = false;
   let listeners = {};
+  let lastProcessedMoveTimestamp = 0;
 
   // Local persistent player info
   function getPlayerUid() {
@@ -54,7 +53,7 @@
     return getPlayerName();
   }
 
-  // Room Code Generator (A-Z, 2-9 avoiding ambiguous characters 0/O, 1/I)
+  // Room Code Generator (6 uppercase chars, unambiguous)
   function generateRoomCode() {
     const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
     let code = '';
@@ -71,7 +70,7 @@
         try {
           fn(data);
         } catch (e) {
-          console.error(`Error in multiplayer listener for "${event}":`, e);
+          console.error(`Error en listener multijugador "${event}":`, e);
         }
       });
     }
@@ -144,9 +143,9 @@
   }
 
   /**
-   * CREATE ROOM
+   * CREATE ROOM (Supports COOP or VERSUS)
    */
-  async function createRoom(difficulty, puzzleData) {
+  async function createRoom(difficulty, puzzleData, gameMode = 'COOP') {
     const { uid, db } = await ensureAuth();
     setupTimeSync(db);
 
@@ -165,11 +164,20 @@
       progress: 0,
       filledCount: 0,
       errors: 0,
+      eliminated: false,
       lastActive: global.firebase.database.ServerValue.TIMESTAMP
     };
 
+    // Shared board representation for COOP mode
+    const initialSharedBoard = {};
+    for (let i = 0; i < 81; i++) {
+      const ch = puzzleData.puzzle[i];
+      initialSharedBoard[i] = ch !== '.' && ch !== '0' ? parseInt(ch, 10) : 0;
+    }
+
     const roomPayload = {
       id: roomId,
+      gameMode: gameMode, // 'COOP' | 'VERSUS'
       difficulty: difficulty,
       puzzle: puzzleData.puzzle,
       solutionHash: solutionHash,
@@ -178,6 +186,10 @@
       difficultyScore: puzzleData.difficultyScore || 0,
       highestTechnique: puzzleData.highestTechnique || 'Naked Single',
       status: 'WAITING',
+      sharedErrors: 0,
+      maxErrors: 3,
+      sharedBoard: initialSharedBoard,
+      lastMove: null,
       createdAt: global.firebase.database.ServerValue.TIMESTAMP,
       startedAt: null,
       hostId: uid,
@@ -195,13 +207,15 @@
     currentRoomRef = roomRef;
     playerRef = db.ref(`rooms/${roomId}/players/${uid}`);
     isHost = true;
+    lastProcessedMoveTimestamp = 0;
 
     setupPresence(db, roomId, uid);
     attachRoomListener(roomRef, uid);
 
     return {
       roomId,
-      puzzleData
+      puzzleData,
+      gameMode
     };
   }
 
@@ -241,6 +255,7 @@
       progress: isAlreadyIn ? (players[uid].progress || 0) : 0,
       filledCount: isAlreadyIn ? (players[uid].filledCount || 0) : 0,
       errors: isAlreadyIn ? (players[uid].errors || 0) : 0,
+      eliminated: isAlreadyIn ? (players[uid].eliminated || false) : false,
       lastActive: global.firebase.database.ServerValue.TIMESTAMP
     };
 
@@ -259,6 +274,7 @@
     currentRoomRef = roomRef;
     playerRef = db.ref(`rooms/${cleanCode}/players/${uid}`);
     isHost = isAlreadyIn ? !!players[uid].isHost : false;
+    lastProcessedMoveTimestamp = 0;
 
     setupPresence(db, cleanCode, uid);
     attachRoomListener(roomRef, uid);
@@ -299,6 +315,22 @@
         emit('opponent_update', null);
       }
 
+      // COOP Move Detection
+      if (room.gameMode === 'COOP' && room.lastMove && room.lastMove.playerId !== myUid) {
+        if (room.lastMove.timestamp && room.lastMove.timestamp > lastProcessedMoveTimestamp) {
+          lastProcessedMoveTimestamp = room.lastMove.timestamp;
+          emit('coop_move_received', room.lastMove);
+        }
+      }
+
+      // COOP Shared Errors update
+      if (room.gameMode === 'COOP') {
+        emit('coop_errors_update', {
+          errors: room.sharedErrors || 0,
+          maxErrors: room.maxErrors || 3
+        });
+      }
+
       // Check status transitions
       if (room.status === 'PLAYING') {
         emit('game_started', room);
@@ -307,7 +339,9 @@
           winner: room.winner,
           winnerName: room.winnerName,
           finishTime: room.finishTime,
-          isWinner: room.winner === myUid,
+          isWinner: room.winner === myUid || room.winner === 'COOP_VICTORY',
+          isDefeatByErrors: room.winner === 'DEFEAT',
+          gameMode: room.gameMode,
           room
         });
       } else if (room.status === 'ABANDONED') {
@@ -317,7 +351,95 @@
   }
 
   /**
-   * UPDATE MY PLAYER PROGRESS
+   * COOP: MAKE SHARED MOVE
+   */
+  async function makeCoopMove(cellIndex, digit) {
+    if (!currentRoomRef || !currentRoomId) return;
+    const myUid = getPlayerUid();
+    const myName = getPlayerName();
+
+    try {
+      const updates = {};
+      updates[`sharedBoard/${cellIndex}`] = digit;
+      updates['lastMove'] = {
+        cellIndex,
+        digit,
+        playerId: myUid,
+        playerName: myName,
+        timestamp: global.firebase.database.ServerValue.TIMESTAMP
+      };
+      await currentRoomRef.update(updates);
+    } catch (e) {
+      console.warn('Error enviando jugada cooperativa:', e);
+    }
+  }
+
+  /**
+   * COOP: REPORT SHARED ERROR
+   */
+  async function reportCoopError() {
+    if (!currentRoomRef || !currentRoomData) return;
+    const currentErrors = (currentRoomData.sharedErrors || 0) + 1;
+
+    try {
+      if (currentErrors >= 3) {
+        // Shared 3-strike defeat!
+        await currentRoomRef.update({
+          sharedErrors: 3,
+          status: 'FINISHED',
+          winner: 'DEFEAT',
+          winnerName: 'Límite de 3 errores alcanzado'
+        });
+      } else {
+        await currentRoomRef.update({
+          sharedErrors: currentErrors
+        });
+      }
+    } catch (e) {
+      console.warn('Error reportando error cooperativo:', e);
+    }
+  }
+
+  /**
+   * VERSUS: REPORT PLAYER ERROR
+   */
+  async function reportVersusError(errorsCount) {
+    if (!playerRef || !currentRoomData) return;
+    try {
+      if (errorsCount >= 3) {
+        await playerRef.update({
+          errors: 3,
+          eliminated: true,
+          lastActive: global.firebase.database.ServerValue.TIMESTAMP
+        });
+
+        // If in versus, opponent wins!
+        const players = currentRoomData.players || {};
+        const myUid = getPlayerUid();
+        const opponentUid = Object.keys(players).find(id => id !== myUid);
+        const opponent = opponentUid ? players[opponentUid] : null;
+
+        if (opponent && !opponent.eliminated) {
+          await currentRoomRef.update({
+            status: 'FINISHED',
+            winner: opponentUid,
+            winnerName: opponent.name || 'Rival',
+            finishTime: getElapsedTimeSeconds(currentRoomData.startedAt)
+          });
+        }
+      } else {
+        await playerRef.update({
+          errors: errorsCount,
+          lastActive: global.firebase.database.ServerValue.TIMESTAMP
+        });
+      }
+    } catch (e) {
+      console.warn('Error reportando error versus:', e);
+    }
+  }
+
+  /**
+   * UPDATE MY PLAYER PROGRESS (VERSUS)
    */
   async function updateProgress(filledCount, totalEmptyToFill, errorsCount = 0) {
     if (!playerRef || !currentRoomId) return;
@@ -345,7 +467,7 @@
       throw new Error('No hay una partida activa.');
     }
 
-    const { solutionHash, solutionSalt } = currentRoomData;
+    const { solutionHash, solutionSalt, gameMode } = currentRoomData;
     const computedHash = await global.SudokuEngine.hashSolutionWithSalt(completedBoardStr, solutionSalt);
 
     if (computedHash !== solutionHash) {
@@ -355,10 +477,11 @@
     const myUid = getPlayerUid();
     const myName = getPlayerName();
 
+    const isCoop = gameMode === 'COOP';
     await currentRoomRef.update({
       status: 'FINISHED',
-      winner: myUid,
-      winnerName: myName,
+      winner: isCoop ? 'COOP_VICTORY' : myUid,
+      winnerName: isCoop ? '¡Equipo!' : myName,
       finishTime: elapsedTimeSeconds
     });
 
@@ -390,8 +513,15 @@
         progress: 0,
         filledCount: 0,
         errors: 0,
+        eliminated: false,
         lastActive: global.firebase.database.ServerValue.TIMESTAMP
       };
+    }
+
+    const initialSharedBoard = {};
+    for (let i = 0; i < 81; i++) {
+      const ch = newPuzzleData.puzzle[i];
+      initialSharedBoard[i] = ch !== '.' && ch !== '0' ? parseInt(ch, 10) : 0;
     }
 
     await currentRoomRef.update({
@@ -403,6 +533,9 @@
       difficultyScore: newPuzzleData.difficultyScore || 0,
       highestTechnique: newPuzzleData.highestTechnique || 'Naked Single',
       status: 'PLAYING',
+      sharedErrors: 0,
+      sharedBoard: initialSharedBoard,
+      lastMove: null,
       startedAt: global.firebase.database.ServerValue.TIMESTAMP,
       winner: null,
       winnerName: null,
@@ -445,6 +578,7 @@
     playerRef = null;
     currentRoomData = null;
     isHost = false;
+    lastProcessedMoveTimestamp = 0;
   }
 
   const MultiplayerService = {
@@ -456,6 +590,9 @@
     leaveRoom,
     restartGame,
     updateProgress,
+    makeCoopMove,
+    reportCoopError,
+    reportVersusError,
     submitVictory,
     getSynchronizedServerTime,
     getElapsedTimeSeconds,

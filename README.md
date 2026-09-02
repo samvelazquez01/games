@@ -1,51 +1,53 @@
 # GAMES ONLINE - Plataforma de Juegos Multijugador en Tiempo Real 🎮
 
-Plataforma web modular, rápida y responsive de **juegos multijugador online en tiempo real** construida con **JavaScript Vanilla**, **CSS3 moderno (Cyber Dark)** y **Firebase Realtime Database**, lista para desplegarse directamente en **GitHub Pages**.
+Plataforma web modular, moderna, rápida y responsive de **juegos multijugador online en tiempo real** construida con **JavaScript Vanilla**, **Canvas 2D**, **CSS3 (Cyber Dark)** y **Firebase Realtime Database**, lista para desplegarse directamente en **GitHub Pages**.
 
 ---
 
 ## 🕹️ Juegos Disponibles
 
-### 1. 🧩 Sudoku Online (1 o 2 Jugadores)
-- **Modos de Juego**:
-  - **🎯 En Solitario**: Práctica individual.
-  - **🤝 En Pareja (Cooperativo)**: Dos jugadores resuelven **el mismo tablero juntos en tiempo real** con 3 vidas compartidas.
-  - **⚔️ Duelo (Versus)**: Tableros independientes compitiendo por terminar primero.
-- **Niveles de Dificultad Real**:
-  - **EXPERTO**: Requiere técnicas como *Pointing*, *Box-Line Reduction*, *Naked/Hidden Pairs/Triples*, *X-Wing*, *XY-Wing*.
-  - **EXTREMO**: Requiere *Swordfish*, *XYZ-Wing*, *W-Wing*, *Skyscraper*, *Two-String Kite*, *Simple Coloring*.
-  - **IMPOSIBLE**: Reducido a 17-22 pistas matemáticas exigiendo cadenas de inferencia complejas (*XY-Chains*, *Forcing Chains*, *AIC*, *Jellyfish*, *Finned Swordfish*).
-- **Sistema de 3 Vidas**: Cada casilla admite únicamente el número correcto. Al acumular 3 errores se pierde la partida.
+### 1. 🌲 Sombras del Bosque (Campamento Sombrío) — 2D Top-Down (4 a 10 Jugadores)
+- **Concepto**: Juego de supervivencia y deducción social en un campamento nocturno 2D.
+- **Roles y Asignación Secreta**:
+  - **Supervivientes**: Realizan actividades en las 7 cabañas y buscan expulsar a los asesinos.
+  - **Asesinos (1 o 2 configurables por el Anfitrión)**: Cazan supervivientes durante los apagones con 15s de cooldown.
+- **Ciclos de Luz Sincronizados**:
+  - **5 segundos de LUZ**: Visión normal mediante antorcha/linterna y realización de tareas.
+  - **3 segundos de APAGÓN**: Supervivientes a oscuras (visión mínima); asesinos conservan visión nocturna.
+- **6 Minijuegos / Tareas Interactivas**:
+  - ⚡ *Generador*: Conectar cables de colores.
+  - 📻 *Radio*: Calibrar frecuencia en onda senoidal.
+  - 🌿 *Invernadero*: Dispensar agua a los cultivos.
+  - 💊 *Clínica*: Ordenar botiquín de primeros auxilios.
+  - 🪵 *Leña*: Apilar leños para la hoguera.
+  - 💧 *Filtro*: Limpiar impurezas del agua.
+- **Cadáveres, Reportes y Reuniones**:
+  - Reportar cadáveres o convocar reunión de emergencia en la hoguera central.
+  - Votación y expulsión secreta (la identidad del expulsado se revela solo al final).
+- **10 Personajes Jugables**: Sprites extraídos directamente de la hoja de personajes con animación de movimiento.
 
 ---
 
-### 2. 🛑 STOP Online / Tutti Frutti / Basta (N Jugadores)
-- **Multijugador Masivo**: Juega con cualquier cantidad de participantes (2, 3, 5, 10 o más jugadores) en una misma sala.
-- **Rol de Capitán 👑**: Quien crea la sala inicia la partida, evalúa y asigna puntos (100, 50, 25, 0) y avanza de ronda.
-- **5 Rondas con Letras 100% Aleatorias**: Selección aleatoria sin repeticiones de la A a la Z (incluyendo Ñ) sincronizadas para todos.
-- **7 Categorías**: Nombre, Apellido, Fruta, Color, Animal, Artista, País.
-- **Botón STOP con Cuenta Regresiva de 5s**: Aviso en tiempo real con cuenta regresiva sincronizada (`5, 4, 3, 2, 1`), tras la cual se bloquean los campos.
+### 2. 🃏 Guerra / Shithead / Palace (1 a 4 Jugadores)
+- **1 Jugador**: Modo en solitario contra **3 bots inteligentes de IA** (*Bot Alfa*, *Bot Beta*, *Bot Gamma*).
+- **2 a 4 Jugadores**: Partida multijugador exclusivamente entre personas reales.
+- **Mesa Cuadrada de Casino**: Tapete verde con posiciones relativas (Sur, Oeste, Norte, Este) y animación de reparto.
+- **Reglas Especiales**:
+  - Carta 2 (Reset / Comodín), Carta 7 (Menor o Igual), Carta 10 (Quema de montón + Turno extra), 4 iguales consecutivas (Quema).
+  - 3 Fases de juego: Mano $\rightarrow$ Cartas Boca Arriba $\rightarrow$ Cartas Boca Abajo (a ciegas).
 
 ---
 
-### 3. 🃏 Guerra / Shithead / Palace (1 a 4 Jugadores)
-- **1 Jugador**: Juega en solitario contra **3 bots inteligentes de IA** (Alfa, Beta, Gamma) con demoras naturales (800-1400ms).
-- **2 a 4 Jugadores**: Partida online exclusivamente entre personas reales conectadas (sin bots).
-- **Mecánicas y Reglas**:
-  - **Baraja de 52 cartas**: `3 < 4 < 5 < 6 < 7 < 8 < 9 < 10 < J < Q < K < A`.
-  - **Carta 2 (Reset)**: Se juega sobre cualquier carta y reinicia el valor para el siguiente jugador.
-  - **Carta 7 (Menor o Igual)**: Obliga al siguiente jugador a colocar una carta $\le 7$ (o un 2).
-  - **Carta 10 (Quema)**: Quema todo el montón central inmediatamente y otorga turno extra al jugador.
-  - **4 Cartas Iguales Consecutivas**: Queman el montón y dan turno extra.
-  - **Jugadas Múltiples**: Puedes lanzar varias cartas del mismo número juntas (ej: tres 8s).
-  - **Recoger el Montón**: Si no tienes jugada válida, recoges el montón central a tu mano privada.
-- **Estructura de Cartas**:
-  - **Fase de Preparación**: Recibes 3 cartas boca abajo + 6 cartas visibles. Eliges exactamente 3 para colocarlas boca arriba; las otras 3 quedan en tu mano privada.
-  - **Fase 1 (Mano y Robo)**: Juegas desde tu mano privada mientras robas del mazo hasta tener 3 cartas.
-  - **Fase 2 (Boca Arriba)**: Cuando se acaba el mazo y tu mano está vacía, juegas desde tus 3 cartas boca arriba.
-  - **Fase 3 (Boca Abajo a Ciegas)**: Cuando no te quedan cartas boca arriba, juegas a ciegas tus cartas boca abajo.
-  - **Victoria**: El primer jugador en quedarse sin cartas gana (🥇 1º, 🥈 2º, 🥉 3º, 4º).
-- **Privacidad Total**: Las manos privadas y las cartas boca abajo se mantienen en rutas protegidas en Firebase (`/guerra_private`), impidiendo que otros jugadores las espíen.
+### 3. 🛑 STOP Online / Tutti Frutti / Basta (N Jugadores)
+- **Multijugador Masivo**: Juega con cualquier cantidad de participantes simultáneos.
+- **Rol de Capitán 👑**: Inicia rondas, evalúa respuestas y asigna puntuaciones (100, 50, 25, 0).
+- **5 Rondas con Letras 100% Aleatorias**: 7 categorías sincronizadas con botón STOP y cuenta regresiva de 5 segundos.
+
+---
+
+### 4. 🧩 Sudoku Online (1 o 2 Jugadores)
+- **Modos**: Solitario, En Pareja (cooperativo en tablero compartido con 3 vidas) y Duelo (versus).
+- **Niveles Reales**: Experto, Extremo e Imposible con 17-22 pistas y técnicas avanzadas.
 
 ---
 
@@ -53,20 +55,25 @@ Plataforma web modular, rápida y responsive de **juegos multijugador online en 
 
 ```text
 /
-├── index.html              # Portal de juegos, contenedor de Sudoku, STOP y Guerra
-├── style.css               # Estilos Cyber Dark responsive para toda la plataforma y cartas
-├── firebase-config.js      # Conexión y credenciales de Firebase
-├── database.rules.json     # Reglas de seguridad para Sudoku, STOP y Guerra
-├── platform.js             # Coordinador de navegación y catálogo de juegos
+├── assets/
+│   ├── characters_sheet.jpg  # Hoja de 10 personajes para Sombras del Bosque
+│   └── map_camp.jpg          # Mapa del campamento nocturno 1024x1024
 │
-├── sudoku.js               # Motor de Sudoku (solución única DLX y analizador lógico)
-├── sudoku-worker.js        # Web Worker no bloqueante para Sudoku
-├── multiplayer.js          # Sincronización multijugador de Sudoku
-├── app.js                  # Controlador de interfaz de Sudoku
+├── index.html                # Catálogo de 4 juegos y contenedores de UI
+├── style.css                 # Estilos Cyber Dark, mesa de cartas, canvas 2D y joystick
+├── firebase-config.js        # Configuración y credenciales de Firebase
+├── database.rules.json       # Reglas de seguridad para los 4 juegos
+├── platform.js               # Coordinador de navegación y catálogo de juegos
 │
-├── stop-game.js            # Motor y sincronización en tiempo real de STOP
-├── guerra-game.js          # Motor, reglas y sincronización de Guerra (1-4 jugadores con IA)
-└── README.md               # Documentación y guía de despliegue
+├── sombras-assets.js         # Extractor & Chroma-Key de sprites de personajes
+├── sombras-tasks.js          # Motor de minijuegos y tareas interactivas
+├── sombras-game.js           # Motor Canvas 2D, cámara, colisiones, luces y Firebase
+│
+├── guerra-game.js            # Motor de cartas Guerra con IA y mesa de casino
+├── stop-game.js              # Motor y sincronización en tiempo real de STOP
+├── sudoku.js                 # Generador lógico y solucionador DLX de Sudoku
+├── multiplayer.js            # Sincronización multijugador de Sudoku
+└── app.js                    # Controlador de interfaz de Sudoku
 ```
 
 ---
@@ -76,4 +83,4 @@ Plataforma web modular, rápida y responsive de **juegos multijugador online en 
 1. Sube los archivos a tu repositorio de GitHub.
 2. En GitHub, ve a **Settings > Pages**.
 3. Selecciona la rama `main` y la carpeta `/ (root)`.
-4. Pulsa **Save**. En segundos tu plataforma estará online.
+4. Pulsa **Save**. La plataforma con los 4 juegos estará lista en segundos.

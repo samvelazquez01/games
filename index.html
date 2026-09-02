@@ -137,6 +137,28 @@
           <span style="font-size: 20px; color: var(--accent-amber);">➡️</span>
         </div>
 
+        <!-- Game 4: SOMBRAS DEL BOSQUE (2D TOP-DOWN MULTIPLAYER) -->
+        <div id="portal-card-sombras" class="portal-game-card card-sombras">
+          <div class="portal-game-icon" style="color: var(--accent-emerald); font-size: 38px;">
+            🌲
+          </div>
+          <div class="portal-game-info">
+            <div class="portal-game-title">
+              <span>SOMBRAS DEL BOSQUE</span>
+              <span class="difficulty-badge" style="background: rgba(16, 185, 129, 0.2); color: var(--accent-emerald); border: 1px solid var(--accent-emerald); font-size: 9px; padding: 2px 6px;">4-10 Jugadores</span>
+            </div>
+            <p class="portal-game-desc">
+              Juego 2D top-down de deducción social en el campamento nocturno. Ciclos de luz/apagón (5s/3s), 6 tareas interactivas, asesinatos y votaciones.
+            </p>
+            <div class="portal-game-tags">
+              <span class="game-tag">🌲 Campamento 2D</span>
+              <span class="game-tag">🔪 1-2 Asesinos</span>
+              <span class="game-tag">⚡ Luces 5s/3s</span>
+            </div>
+          </div>
+          <span style="font-size: 20px; color: var(--accent-emerald);">➡️</span>
+        </div>
+
         <!-- Coming Soon Teaser -->
         <div class="portal-game-card" style="opacity: 0.6; cursor: default; border-style: dashed;">
           <div class="portal-game-icon" style="font-size: 34px;">
@@ -930,6 +952,253 @@
 
     </div>
 
+    <!-- =========================================================================
+         CONTAINER: JUEGO 4 - SOMBRAS DEL BOSQUE (2D TOP-DOWN ASESINOS OCULTOS)
+         ========================================================================= -->
+    <div id="sombras-app-container" style="display: none; flex-direction: column; gap: 16px; width: 100%;">
+      
+      <!-- SOMBRAS VIEW 1: LOBBY & MENU -->
+      <section id="sombras-view-lobby" class="view-section active">
+        
+        <div class="glass-card">
+          <div class="input-group">
+            <label class="input-label" for="sombras-nickname-input">Tu Nombre de Jugador</label>
+            <input type="text" id="sombras-nickname-input" class="text-input" placeholder="Tu Apodo..." maxlength="20">
+          </div>
+
+          <!-- Character Selector (10 Sprites) -->
+          <div class="input-group">
+            <label class="input-label">Selecciona tu Personaje (10 Disponibles)</label>
+            <div id="sombras-char-select-grid" style="display: grid; grid-template-columns: repeat(5, 1fr); gap: 8px; max-height: 180px; overflow-y: auto; padding: 4px;">
+              <!-- 10 Character avatars populated dynamically -->
+            </div>
+          </div>
+
+          <!-- Killer Count Selector (Host Config) -->
+          <div class="input-group">
+            <label class="input-label">Cantidad de Asesinos en la Partida</label>
+            <div id="sombras-killer-count-selector" class="btn-group">
+              <button class="btn btn-toggle-option active" data-killers="1" style="flex: 1;">
+                🔪 1 Asesino
+              </button>
+              <button class="btn btn-toggle-option" data-killers="2" style="flex: 1;">
+                🔪🔪 2 Asesinos
+              </button>
+            </div>
+          </div>
+
+          <!-- Create Sombras Room -->
+          <button id="sombras-btn-create-room" class="btn btn-primary" style="background: linear-gradient(135deg, #10b981, #059669); font-size: 16px; padding: 16px;">
+            <span>🌲</span> CREAR SALA DE SOMBRAS
+          </button>
+
+          <div class="divider">O UNIRSE A UNA SALA</div>
+
+          <!-- Join Sombras Room -->
+          <div class="input-group">
+            <label class="input-label" for="sombras-input-join-code">Código de Sala de Sombras</label>
+            <div class="btn-group">
+              <input type="text" id="sombras-input-join-code" class="text-input code-input" placeholder="K9X2B" maxlength="6" style="flex: 1.2;">
+              <button id="sombras-btn-join-room" class="btn" style="flex: 1;">
+                <span>🚀</span> ENTRAR
+              </button>
+            </div>
+          </div>
+        </div>
+
+      </section>
+
+      <!-- SOMBRAS VIEW 2: WAITING ROOM LOBBY -->
+      <section id="sombras-view-waiting" class="view-section">
+        
+        <div class="glass-card">
+          <div style="display: flex; justify-content: space-between; align-items: center;">
+            <h2 class="card-title"><span>🌲</span> Campamento Nocturno</h2>
+            <div style="display: flex; gap: 6px;">
+              <span id="sombras-waiting-killer-badge" class="difficulty-badge diff-EXTREMO">1 Asesino</span>
+              <span id="sombras-waiting-players-count" class="difficulty-badge diff-EXPERTO">1 / 10 Jugadores</span>
+            </div>
+          </div>
+
+          <div class="room-code-display" style="border-color: var(--accent-emerald);">
+            <span class="room-code-label" style="color: var(--accent-emerald);">Código del Campamento</span>
+            <span id="sombras-display-room-code" class="room-code-text" style="text-shadow: 0 0 15px rgba(16, 185, 129, 0.6);">-----</span>
+            <div class="btn-group" style="width: 100%; margin-top: 8px;">
+              <button id="sombras-btn-copy-code" class="btn" style="font-size: 13px; padding: 8px 12px;">
+                <span>📋</span> Copiar Código
+              </button>
+              <button id="sombras-btn-share-room" class="btn" style="font-size: 13px; padding: 8px 12px;">
+                <span>🔗</span> Compartir Enlace
+              </button>
+            </div>
+          </div>
+
+          <!-- Connected Players List -->
+          <div class="input-group">
+            <label class="input-label">Supervivientes en el Campamento (4 a 10)</label>
+            <div id="sombras-waiting-players-list" style="display: flex; flex-direction: column; gap: 8px; max-height: 200px; overflow-y: auto;">
+              <!-- Dynamic player list -->
+            </div>
+          </div>
+
+          <button id="sombras-btn-host-start" class="btn btn-primary" style="background: linear-gradient(135deg, #10b981, #059669); font-size: 16px; padding: 16px;">
+            <span>🌲</span> INICIAR PARTIDA
+          </button>
+
+          <button id="sombras-btn-leave-waiting" class="btn btn-danger">
+            <span>🚪</span> Salir de la Sala
+          </button>
+        </div>
+
+      </section>
+
+      <!-- SOMBRAS VIEW 3: DRAMATIC ROLE REVEAL -->
+      <section id="sombras-view-role-reveal" class="view-section">
+        
+        <div class="glass-card role-reveal-card" style="min-height: 320px; justify-content: center;">
+          <div id="sombras-role-icon" style="font-size: 72px; filter: drop-shadow(0 0 25px rgba(255,255,255,0.4));">🛡️</div>
+          <h1 id="sombras-role-title" style="font-size: 32px; font-weight: 900; margin: 0; letter-spacing: 2px;">ERES SUPERVIVIENTE</h1>
+          <p id="sombras-role-desc" style="font-size: 15px; color: var(--text-muted); max-width: 380px; margin: 0;">
+            Completa las tareas del campamento o descubre al asesino antes de que acabe con todos.
+          </p>
+          <div id="sombras-role-partner" style="display: none; font-size: 14px; font-weight: 800; color: var(--accent-rose); background: rgba(225, 29, 72, 0.15); padding: 8px 16px; border-radius: var(--radius-full);"></div>
+        </div>
+
+      </section>
+
+      <!-- SOMBRAS VIEW 4: 2D TOP-DOWN CANVAS GAMEPLAY -->
+      <section id="sombras-view-game" class="view-section">
+        
+        <div class="sombras-game-viewport">
+          
+          <!-- Top HUD -->
+          <div class="sombras-top-hud">
+            
+            <!-- Global Task Progress -->
+            <div class="sombras-task-bar-container">
+              <span id="sombras-task-progress-text" style="font-family: var(--font-mono); font-size: 12px; font-weight: 800; color: var(--accent-emerald);">
+                OBJETIVOS: 0 / 12
+              </span>
+              <div style="width: 80px; height: 8px; background: rgba(30, 41, 59, 0.8); border-radius: 4px; overflow: hidden;">
+                <div id="sombras-task-progress-bar" style="width: 0%; height: 100%; background: var(--accent-emerald); transition: width 0.3s;"></div>
+              </div>
+            </div>
+
+            <!-- Lights Cycle & Role Tag -->
+            <div style="display: flex; align-items: center; gap: 8px;">
+              <span id="sombras-my-role-tag" class="difficulty-badge diff-EXPERTO">🛡️ Superviviente</span>
+              <div style="display: flex; align-items: center; gap: 4px; background: rgba(15, 23, 42, 0.85); padding: 4px 10px; border-radius: var(--radius-full); border: 1px solid var(--border-color);">
+                <span id="sombras-lights-badge" class="difficulty-badge diff-EXPERTO" style="font-size: 10px; padding: 2px 6px;">☀️ LUZ</span>
+                <span id="sombras-lights-timer" style="font-family: var(--font-mono); font-size: 12px; font-weight: 800; color: var(--text-main);">5s</span>
+              </div>
+            </div>
+
+          </div>
+
+          <!-- 2D Canvas -->
+          <canvas id="sombras-canvas"></canvas>
+
+          <!-- Touch Joystick on Mobile -->
+          <div id="sombras-joystick-area" class="sombras-joystick-wrapper">
+            <div id="sombras-joystick-knob" class="sombras-joystick-knob"></div>
+          </div>
+
+          <!-- Action Buttons (Floating Bottom Right) -->
+          <div class="sombras-action-controls">
+            
+            <!-- Interact with task -->
+            <button id="sombras-btn-interact" class="btn-action-round btn-action-interact" style="display: none;">
+              <span style="font-size: 22px;">🔧</span>
+              <span>USAR</span>
+            </button>
+
+            <!-- Report dead body -->
+            <button id="sombras-btn-report" class="btn-action-round btn-action-report" style="display: none;">
+              <span style="font-size: 22px;">📢</span>
+              <span>REPORTAR</span>
+            </button>
+
+            <!-- Call Emergency Meeting at Campfire -->
+            <button id="sombras-btn-meeting" class="btn-action-round btn-action-meeting" style="display: none;">
+              <span style="font-size: 22px;">🔔</span>
+              <span>REUNIÓN</span>
+            </button>
+
+            <!-- Kill target (Killer only) -->
+            <button id="sombras-btn-kill" class="btn-action-round btn-action-kill" style="display: none;">
+              <span style="font-size: 22px;">🔪</span>
+              <span>ELIMINAR</span>
+            </button>
+
+          </div>
+
+        </div>
+
+      </section>
+
+      <!-- SOMBRAS VIEW 5: EMERGENCY MEETING & VOTING -->
+      <section id="sombras-view-meeting" class="view-section">
+        
+        <div class="glass-card">
+          <div style="display: flex; justify-content: space-between; align-items: center;">
+            <div>
+              <h2 id="sombras-meeting-title" class="card-title" style="margin: 0; font-size: 18px; color: var(--accent-rose);">
+                🚨 ¡REUNIÓN DE EMERGENCIA!
+              </h2>
+              <p id="sombras-meeting-subtitle" style="font-size: 12px; color: var(--text-muted); margin: 2px 0 0 0;">
+                Convocada por un superviviente
+              </p>
+            </div>
+            <span id="sombras-meeting-timer" class="difficulty-badge diff-EXTREMO" style="font-size: 14px; padding: 6px 14px;">⏱️ 30s</span>
+          </div>
+
+          <!-- Player Cards Grid for Voting -->
+          <div class="input-group" style="margin-top: 10px;">
+            <label class="input-label">Vota a un sospechoso para expulsarlo del campamento</label>
+            <div id="sombras-meeting-players-grid" style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px; max-height: 280px; overflow-y: auto;">
+              <!-- Players cards rendered here -->
+            </div>
+          </div>
+
+          <button id="sombras-btn-skip-vote" class="btn" style="width: 100%; padding: 12px; font-size: 14px; background: rgba(148, 163, 184, 0.15); border-color: var(--border-color); color: var(--text-muted);">
+            ⏭️ Saltar Voto (No votar a nadie)
+          </button>
+        </div>
+
+      </section>
+
+      <!-- SOMBRAS VIEW 6: FINAL RESULTS & ROLE REVEAL -->
+      <section id="sombras-view-results" class="view-section">
+        
+        <div class="glass-card" style="text-align: center;">
+          <h1 id="sombras-podium-title" style="font-size: 26px; font-weight: 900; color: var(--accent-cyan); margin: 0;">
+            ¡VICTORIA!
+          </h1>
+          <p id="sombras-podium-subtitle" style="font-size: 14px; color: var(--text-muted); margin: 4px 0 14px 0;">
+            El campamento ha sobrevivido a la noche.
+          </p>
+
+          <div class="input-group" style="text-align: left;">
+            <label class="input-label">Identidades y Roles Secretos Revelados</label>
+            <div id="sombras-podium-role-list" style="display: flex; flex-direction: column; gap: 8px; max-height: 220px; overflow-y: auto;">
+              <!-- Final role list rendered dynamically -->
+            </div>
+          </div>
+
+          <div class="btn-group" style="margin-top: 12px;">
+            <button id="sombras-btn-play-again" class="btn btn-emerald" style="flex: 1.2;">
+              <span>🔄</span> JUGAR DE NUEVO
+            </button>
+            <button id="sombras-btn-return-menu" class="btn" style="flex: 1;">
+              Volver al Menú
+            </button>
+          </div>
+        </div>
+
+      </section>
+
+    </div>
+
   </div>
 
   <!-- =========================================================================
@@ -987,6 +1256,31 @@
     </div>
   </div>
 
+  <!-- SOMBRAS INTERACTIVE TASK MODAL -->
+  <div id="sombras-task-modal" class="modal-overlay" style="z-index: 120;">
+    <div class="modal-card" style="max-width: 440px; text-align: center; position: relative;">
+      
+      <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
+        <h2 id="sombras-task-title" class="modal-title" style="margin: 0; font-size: 18px;">
+          <span>⚡</span> Reparar Generador
+        </h2>
+        <button class="icon-btn" style="width: 32px; height: 32px; font-size: 14px;" onclick="if(window.SombrasTasks) window.SombrasTasks.closeTask();">✕</button>
+      </div>
+      <p id="sombras-task-location" style="font-size: 12px; color: var(--accent-emerald); margin: 0 0 12px 0; font-weight: 700;">
+        Taller / Almacén NE
+      </p>
+
+      <div id="sombras-task-success-banner" style="display: none; background: rgba(16, 185, 129, 0.2); border: 2px solid var(--accent-emerald); border-radius: var(--radius-md); padding: 12px; margin-bottom: 12px; align-items: center; justify-content: center; gap: 8px;">
+        <span style="font-size: 20px;">✅</span>
+        <span style="font-weight: 800; color: var(--accent-emerald); font-size: 15px;">¡OBJETIVO COMPLETADO!</span>
+      </div>
+
+      <!-- Minigame content dynamically inserted here -->
+      <div id="sombras-task-content"></div>
+
+    </div>
+  </div>
+
   <!-- RULES & HOW TO PLAY MODAL -->
   <div id="modal-game-rules" class="modal-overlay">
     <div class="modal-card rules-modal-card">
@@ -1000,13 +1294,65 @@
 
       <!-- Navigation Tabs -->
       <div class="rules-tabs-bar">
-        <button class="rules-tab-btn active" data-rules-tab="guerra">🃏 Guerra</button>
+        <button class="rules-tab-btn active" data-rules-tab="sombras">🌲 Sombras</button>
+        <button class="rules-tab-btn" data-rules-tab="guerra">🃏 Guerra</button>
         <button class="rules-tab-btn" data-rules-tab="sudoku">🧩 Sudoku</button>
         <button class="rules-tab-btn" data-rules-tab="stop">🛑 STOP</button>
       </div>
 
-      <!-- TAB 1: GUERRA RULES -->
-      <div id="rules-tab-content-guerra" class="rules-content-scroll">
+      <!-- TAB 1: SOMBRAS RULES -->
+      <div id="rules-tab-content-sombras" class="rules-content-scroll">
+        
+        <div class="rule-card">
+          <div class="rule-card-title">
+            <span>🌲</span> Concepto de Sombras del Bosque
+          </div>
+          <div class="rule-card-desc">
+            Estás atrapado en un campamento nocturno. La mayoría de los jugadores son <b>Supervivientes</b> y 1 o 2 son seleccionados secretamente como <b>Asesinos</b>.
+          </div>
+        </div>
+
+        <div class="rule-card">
+          <div class="rule-card-title">
+            <span>⚡</span> Ciclo de Luz y Apagón (5s / 3s)
+          </div>
+          <div class="rule-card-desc">
+            • <b>5 segundos de LUZ:</b> Visión normal con linterna/antorcha. Los supervivientes realizan tareas y exploran.<br>
+            • <b>3 segundos de APAGÓN:</b> Los supervivientes quedan prácticamente a oscuras (visión mínima). Los asesinos conservan su visión nocturna para cazar.
+          </div>
+        </div>
+
+        <div class="rule-card">
+          <div class="rule-card-title">
+            <span>🛡️</span> Supervivientes y Tareas
+          </div>
+          <div class="rule-card-desc">
+            Deben completar las 6 tareas del campamento (Generador, Radio, Invernadero, Botiquín, Leña, Filtro) o descubrir y expulsar a todos los asesinos mediante votación en la hoguera.
+          </div>
+        </div>
+
+        <div class="rule-card">
+          <div class="rule-card-title">
+            <span>🔪</span> Asesinos y Eliminaciones
+          </div>
+          <div class="rule-card-desc">
+            Eliminan supervivientes al acercarse (con 15s de cooldown). Ganan si el número de asesinos vivos es igual o superior al de supervivientes.
+          </div>
+        </div>
+
+        <div class="rule-card">
+          <div class="rule-card-title">
+            <span>🚨</span> Cadáveres, Reuniones y Votación
+          </div>
+          <div class="rule-card-desc">
+            Al encontrar un cadáver presiona <b>REPORTAR</b>, o convoca una reunión de emergencia en la hoguera central. Durante la reunión se discute y se vota para expulsar al sospechoso con más votos. <b>La identidad del expulsado permanece secreta hasta el final.</b>
+          </div>
+        </div>
+
+      </div>
+
+      <!-- TAB 2: GUERRA RULES -->
+      <div id="rules-tab-content-guerra" class="rules-content-scroll" style="display: none;">
         
         <div class="rule-card">
           <div class="rule-card-title">
@@ -1035,7 +1381,7 @@
           <div class="rule-special-grid">
             <div class="rule-special-item">
               <span style="font-weight: 800; color: var(--accent-amber);">🃏 Carta 2 (Reinicio)</span>
-              <span style="font-size: 12px; color: var(--text-muted);">Se puede tirar sobre cualquier carta. Reinicia el montón a cero (la siguiente carta puede ser cualquiera).</span>
+              <span style="font-size: 12px; color: var(--text-muted);">Se puede tirar sobre cualquier carta. Reinicia el montón a cero.</span>
             </div>
             <div class="rule-special-item">
               <span style="font-weight: 800; color: var(--accent-amber);">⚡ Carta 7 (Menor o Igual)</span>
@@ -1043,38 +1389,18 @@
             </div>
             <div class="rule-special-item">
               <span style="font-weight: 800; color: var(--accent-rose);">💥 Carta 10 (Quema)</span>
-              <span style="font-size: 12px; color: var(--text-muted);">Quema y elimina todo el montón central inmediatamente y te da un <b>turno extra</b>.</span>
+              <span style="font-size: 12px; color: var(--text-muted);">Quema y elimina todo el montón inmediatamente + <b>turno extra</b>.</span>
             </div>
             <div class="rule-special-item">
               <span style="font-weight: 800; color: var(--accent-rose);">🔥 4 Iguales Consecutivas</span>
-              <span style="font-size: 12px; color: var(--text-muted);">Si se juntan 4 cartas del mismo número en el montón, se quema y da turno extra.</span>
+              <span style="font-size: 12px; color: var(--text-muted);">Queman el montón y dan turno extra.</span>
             </div>
-          </div>
-        </div>
-
-        <div class="rule-card">
-          <div class="rule-card-title">
-            <span>📥</span> Recoger el Montón
-          </div>
-          <div class="rule-card-desc">
-            Si en tu turno no tienes ninguna carta válida para colocar sobre el montón, debes presionar <b>"Recoger Montón"</b> y añadir todas las cartas de la mesa a tu mano privada.
-          </div>
-        </div>
-
-        <div class="rule-card">
-          <div class="rule-card-title">
-            <span>🔄</span> Las 3 Fases del Juego
-          </div>
-          <div class="rule-card-desc">
-            <b>1. Mano Privada & Mazo:</b> Juegas desde tu mano y robas del mazo hasta tener siempre al menos 3 cartas.<br>
-            <b>2. Cartas Boca Arriba:</b> Cuando se agota el mazo y te quedas sin cartas en mano, juegas desde tus 3 cartas boca arriba.<br>
-            <b>3. Cartas Boca Abajo (A Ciegas):</b> Cuando no te quedan cartas boca arriba, volteas una de tus cartas ocultas. Si es válida la juegas; si no, ¡recoges todo el montón!
           </div>
         </div>
 
       </div>
 
-      <!-- TAB 2: SUDOKU RULES -->
+      <!-- TAB 3: SUDOKU RULES -->
       <div id="rules-tab-content-sudoku" class="rules-content-scroll" style="display: none;">
         
         <div class="rule-card">
@@ -1097,18 +1423,9 @@
           </div>
         </div>
 
-        <div class="rule-card">
-          <div class="rule-card-title">
-            <span>❤️</span> 3 Vidas y Errores
-          </div>
-          <div class="rule-card-desc">
-            Cada casilla admite únicamente el número correcto matemáticamente. Si colocas un número incorrecto, se marcará un error. Al acumular <b>3 errores se pierde la partida</b>.
-          </div>
-        </div>
-
       </div>
 
-      <!-- TAB 3: STOP RULES -->
+      <!-- TAB 4: STOP RULES -->
       <div id="rules-tab-content-stop" class="rules-content-scroll" style="display: none;">
         
         <div class="rule-card">
@@ -1125,19 +1442,7 @@
             <span>⏱️</span> Botón STOP y Cuenta Regresiva
           </div>
           <div class="rule-card-desc">
-            El primer jugador en completar sus campos presiona <b>¡STOP!</b>. Se iniciará una cuenta regresiva de 5 segundos para todos los demás jugadores antes de bloquear las respuestas.
-          </div>
-        </div>
-
-        <div class="rule-card">
-          <div class="rule-card-title">
-            <span>👑</span> Rol del Capitán y Puntos
-          </div>
-          <div class="rule-card-desc">
-            El Capitán califica las respuestas de cada categoría:<br>
-            • <b>100 pts:</b> Respuesta válida y única.<br>
-            • <b>50 pts:</b> Respuesta repetida por otro jugador.<br>
-            • <b>0 pts:</b> Respuesta incorrecta o vacía.
+            El primer jugador en completar sus campos presiona <b>¡STOP!</b> y se inicia una cuenta regresiva de 5 segundos para todos.
           </div>
         </div>
 
@@ -1196,6 +1501,9 @@
   <script src="app.js"></script>
   <script src="stop-game.js"></script>
   <script src="guerra-game.js"></script>
+  <script src="sombras-assets.js"></script>
+  <script src="sombras-tasks.js"></script>
+  <script src="sombras-game.js"></script>
   <script src="platform.js"></script>
 </body>
 </html>

@@ -2,10 +2,11 @@
  * SOMBRAS DEL BOSQUE (CAMPAMENTO SOMBRÍO) - 2D MULTIPLAYER ENGINE
  * 
  * Top-down social deduction game:
- * - 4 to 10 players.
+ * - 4 to 10 players (or 1 player + 3 AI bots in solo mode).
  * - 1 or 2 Killers (Asesinos) configured by host.
+ * - Visible, atmospheric night camp map with soft lighting mask & torchlight.
  * - Synchronized 5s Light / 3s Blackout cycles.
- * - Canvas 2D rendering with dynamic lighting mask & fog of war.
+ * - Sliced character sprites with walking animations and corpse sprites.
  * - Collisions with 8 camp cabins, palisade perimeter & campfire.
  * - 6 interactive tasks with global progress tracking.
  * - Assassinations with 15s cooldown, dead body reporting, emergency meetings & voting exiles.
@@ -76,6 +77,19 @@
   // --- MAP & COLLISION GEOMETRY (1024 x 1024) ---
   const MAP_SIZE = 1024;
   const CAMPFIRE = { x: 512, y: 512, radius: 45 };
+
+  // Cabin door lanterns for ambient lighting
+  const LANTERNS = [
+    { x: 512, y: 512, radius: 150, color: 'rgba(245, 158, 11, 0.8)' }, // Campfire
+    { x: 512, y: 295, radius: 70, color: 'rgba(56, 189, 248, 0.5)' },  // North Clinic
+    { x: 512, y: 690, radius: 70, color: 'rgba(245, 158, 11, 0.5)' },  // South Comms
+    { x: 690, y: 495, radius: 70, color: 'rgba(245, 158, 11, 0.5)' },  // East Stables
+    { x: 310, y: 495, radius: 70, color: 'rgba(245, 158, 11, 0.5)' },  // West Mess Hall
+    { x: 640, y: 320, radius: 60, color: 'rgba(245, 158, 11, 0.5)' },  // NE Workshop
+    { x: 360, y: 320, radius: 60, color: 'rgba(245, 158, 11, 0.5)' },  // NW Storage
+    { x: 630, y: 680, radius: 60, color: 'rgba(16, 185, 129, 0.5)' },  // SE Greenhouse
+    { x: 370, y: 680, radius: 60, color: 'rgba(245, 158, 11, 0.5)' }   // SW Dorm
+  ];
 
   // 8 Cabins collision bounding boxes with open doorways
   const CABIN_WALLS = [
@@ -288,9 +302,6 @@
     DOM.meetingTimer = document.getElementById('sombras-meeting-timer');
     DOM.meetingPlayersGrid = document.getElementById('sombras-meeting-players-grid');
     DOM.btnSkipVote = document.getElementById('sombras-btn-skip-vote');
-    DOM.meetingChatLog = document.getElementById('sombras-meeting-chat-log');
-    DOM.meetingChatInput = document.getElementById('sombras-meeting-chat-input');
-    DOM.meetingBtnSend = document.getElementById('sombras-meeting-btn-send');
 
     // Results View
     DOM.podiumTitle = document.getElementById('sombras-podium-title');
@@ -326,6 +337,42 @@
       toast.style.transform = 'translateY(10px)';
       setTimeout(() => toast.remove(), 300);
     }, 3200);
+  }
+
+  // --- CHARACTER PICKER RENDERING ---
+
+  function renderCharacterPicker() {
+    if (!DOM.charSelectGrid) return;
+    const chars = global.SombrasAssets.CHARACTERS;
+    const sprites = global.SombrasAssets.Assets.characterSprites;
+
+    DOM.charSelectGrid.innerHTML = chars.map(c => {
+      const spriteObj = sprites[c.id];
+      const iconUrl = (spriteObj && spriteObj.iconDataUrl) || '';
+      const isSelected = (c.id === State.selectedCharId);
+
+      return `
+        <div class="char-picker-card ${isSelected ? 'selected' : ''}" data-char-id="${c.id}" style="display: flex; flex-direction: column; align-items: center; gap: 4px; padding: 6px; background: rgba(15, 23, 42, 0.7); border: 2px solid ${isSelected ? c.color : 'transparent'}; border-radius: var(--radius-md); cursor: pointer; transition: all 0.2s;">
+          <div style="width: 50px; height: 50px; border-radius: 50%; overflow: hidden; display: flex; align-items: center; justify-content: center; background: #0f172a; border: 2px solid ${c.color};">
+            ${iconUrl ? `<img src="${iconUrl}" style="width: 100%; height: 100%; object-fit: contain;">` : `<span style="color: ${c.color}; font-size: 20px;">👤</span>`}
+          </div>
+          <span style="font-size: 10px; font-weight: 800; color: var(--text-main); text-align: center; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 60px;">${c.name}</span>
+        </div>
+      `;
+    }).join('');
+
+    DOM.charSelectGrid.querySelectorAll('.char-picker-card').forEach(card => {
+      card.addEventListener('click', () => {
+        const charId = card.dataset.charId;
+        State.selectedCharId = charId;
+        const meta = chars.find(c => c.id === charId);
+        DOM.charSelectGrid.querySelectorAll('.char-picker-card').forEach(b => {
+          b.style.borderColor = (b.dataset.charId === charId) ? (meta ? meta.color : 'var(--primary)') : 'transparent';
+          b.classList.toggle('selected', b.dataset.charId === charId);
+        });
+        SombrasAudio.click();
+      });
+    });
   }
 
   // --- ROOM CREATION & LOBBY ---
@@ -385,8 +432,7 @@
           isHost: true,
           joinedAt: global.firebase.database.ServerValue.TIMESTAMP
         }
-      },
-      chat: []
+      }
     };
 
     await roomRef.set(initialPayload);
@@ -482,14 +528,15 @@
           connected: true,
           isHost: true
         }
-      },
-      chat: []
+      }
     };
   }
 
-  // --- START GAME & ROLE ASSIGNMENT ---
+  // --- START GAME WORKFLOW ---
 
   async function startGame() {
+    await global.SombrasAssets.Assets.load();
+
     if (isSinglePlayerMode) {
       startLocalGame();
       return;
@@ -501,17 +548,34 @@
     if (!room) return;
 
     const players = room.players || {};
-    const pids = Object.keys(players);
+    let pids = Object.keys(players);
     const killerCountReq = room.killerCount || 1;
 
-    if (pids.length < 2) {
-      showToast('Se necesitan al menos 2 jugadores para iniciar.', '⚠️');
-      return;
+    // If only 1 player starts -> create 3 friendly AI bots so game is 100% playable!
+    if (pids.length === 1) {
+      const botConfigs = [
+        { id: 'bot_blue', name: 'Mecánico Azul 🤖', charId: 'char_blue', x: 580, y: 470 },
+        { id: 'bot_green', name: 'Guardabosques 🤖', charId: 'char_green', x: 444, y: 554 },
+        { id: 'bot_yellow', name: 'Constructor 🤖', charId: 'char_yellow', x: 580, y: 554 }
+      ];
+      botConfigs.forEach(b => {
+        players[b.id] = {
+          id: b.id,
+          name: b.name,
+          charId: b.charId,
+          x: b.x,
+          y: b.y,
+          alive: true,
+          connected: true,
+          isAI: true
+        };
+      });
+      pids = Object.keys(players);
     }
 
-    // Randomly assign exactly N killers
+    // Assign exactly N killers
     const shuffled = [...pids].sort(() => Math.random() - 0.5);
-    const actualKillerCount = Math.min(killerCountReq, pids.length - 1);
+    const actualKillerCount = Math.min(killerCountReq, Math.max(1, pids.length - 1));
     const killerIds = shuffled.slice(0, actualKillerCount);
 
     const db = global.FirebaseService.getDb();
@@ -529,13 +593,14 @@
         partnerKillerName: partner
       };
 
-      // Reset positions to spawn points
       players[pid].x = SPAWN_POINTS[idx % SPAWN_POINTS.length].x;
       players[pid].y = SPAWN_POINTS[idx % SPAWN_POINTS.length].y;
       players[pid].alive = true;
     });
 
-    await db.ref().update(privateUpdates);
+    try {
+      await db.ref().update(privateUpdates);
+    } catch (e) {}
 
     await currentRoomRef.update({
       status: 'ROLE_REVEAL',
@@ -546,16 +611,14 @@
         nextSwitch: Date.now() + 5000
       },
       deadBodies: {},
-      players: players,
-      chat: []
+      players: players
     });
 
-    // Transition from Role Reveal to Playing after 4 seconds
     setTimeout(async () => {
       if (currentRoomRef) {
         await currentRoomRef.update({ status: 'PLAYING' });
       }
-    }, 4000);
+    }, 3800);
   }
 
   function startLocalGame() {
@@ -564,6 +627,12 @@
     singlePlayerState.status = 'ROLE_REVEAL';
     singlePlayerState.players[uid].x = 512;
     singlePlayerState.players[uid].y = 440;
+
+    // Add 3 AI Campers
+    singlePlayerState.players['bot_1'] = { id: 'bot_1', name: 'Mecánico Azul 🤖', charId: 'char_blue', x: 580, y: 470, alive: true, connected: true, isAI: true };
+    singlePlayerState.players['bot_2'] = { id: 'bot_2', name: 'Guardabosques 🤖', charId: 'char_green', x: 444, y: 554, alive: true, connected: true, isAI: true };
+    singlePlayerState.players['bot_3'] = { id: 'bot_3', name: 'Constructor 🤖', charId: 'char_yellow', x: 580, y: 554, alive: true, connected: true, isAI: true };
+
     renderRoleRevealView(singlePlayerState);
 
     setTimeout(() => {
@@ -572,7 +641,7 @@
     }, 3500);
   }
 
-  // --- ROLE REVEAL & PLAYING VIEWS ---
+  // --- VIEWS RENDERING ---
 
   function renderRoleRevealView(room) {
     const isKiller = State.mySecretRole === 'KILLER';
@@ -611,7 +680,6 @@
       DOM.btnKill.style.display = isKiller ? 'flex' : 'none';
     }
 
-    // Set local player spawn
     const myP = room.players && room.players[State.myUid];
     if (myP) {
       LocalPlayer.x = myP.x || 512;
@@ -622,7 +690,7 @@
     showView('game');
   }
 
-  // --- 2D CANVAS RENDER & LIGHTING LOOP ---
+  // --- CANVAS LOOP & RENDER ---
 
   function startCanvasLoop() {
     if (animFrameId) cancelAnimationFrame(animFrameId);
@@ -647,13 +715,11 @@
     animFrameId = requestAnimationFrame(gameLoop);
   }
 
-  // --- UPDATE: MOVEMENT, COLLISIONS, COOLDOWNS & LIGHTS ---
-
   function update(dt) {
     const room = isSinglePlayerMode ? singlePlayerState : State.room;
     if (!room || room.status !== 'PLAYING') return;
 
-    // 1. Update Lights Cycle (5s Light / 3s Blackout)
+    // 1. Update Lights Cycle
     updateLightsCycle(room);
 
     // 2. Update Kill Cooldown
@@ -670,24 +736,21 @@
       DOM.btnKill.innerHTML = `<span>🔪</span> ELIMINAR`;
     }
 
-    // 3. Process Player Movement & Input
+    // 3. Movement input
     if (State.isAlive) {
       let dx = 0;
       let dy = 0;
 
-      // Keyboard input
       if (Keys.w || Keys.ArrowUp) dy -= 1;
       if (Keys.s || Keys.ArrowDown) dy += 1;
       if (Keys.a || Keys.ArrowLeft) dx -= 1;
       if (Keys.d || Keys.ArrowRight) dx += 1;
 
-      // Joystick input
       if (Joystick.active) {
         dx = Joystick.dirX;
         dy = Joystick.dirY;
       }
 
-      // Normalize diagonal speed
       const len = Math.hypot(dx, dy);
       if (len > 0.1) {
         LocalPlayer.isMoving = true;
@@ -695,7 +758,7 @@
         LocalPlayer.vx = (dx * norm) * LocalPlayer.speed;
         LocalPlayer.vy = (dy * norm) * LocalPlayer.speed;
         LocalPlayer.facing = dx >= 0 ? 1 : -1;
-        LocalPlayer.walkCycle += dt * 10;
+        LocalPlayer.walkCycle += dt * 12;
 
         stepAudioTimer += dt;
         if (stepAudioTimer > 0.35) {
@@ -708,13 +771,11 @@
         LocalPlayer.vy = 0;
       }
 
-      // Apply movement with wall collisions
       const nextX = LocalPlayer.x + LocalPlayer.vx * dt;
       const nextY = LocalPlayer.y + LocalPlayer.vy * dt;
 
       resolveMovementWithCollisions(nextX, nextY);
 
-      // Throttled Firebase position sync (15 Hz)
       syncThrottleTimer += dt;
       if (syncThrottleTimer >= 0.066) {
         syncThrottleTimer = 0;
@@ -722,32 +783,31 @@
       }
     }
 
-    // 4. Check Proximity Prompts (Interact task / Report body / Kill target)
+    // 4. Proximity Checks
     checkProximityActions(room);
   }
 
   function resolveMovementWithCollisions(newX, newY) {
     const playerRadius = 14;
 
-    // Check perimeter palisade wall (Circular fence radius: 440)
-    const distFromCenter = Math.hypot(newX - 512, newY - 512);
-    if (distFromCenter + playerRadius > 440) {
+    // Palisade circle boundary
+    const distCenter = Math.hypot(newX - 512, newY - 512);
+    if (distCenter + playerRadius > 440) {
       const angle = Math.atan2(newY - 512, newX - 512);
       newX = 512 + Math.cos(angle) * (440 - playerRadius);
       newY = 512 + Math.sin(angle) * (440 - playerRadius);
     }
 
-    // Check campfire obstacle (Center circle radius: 45)
-    const distFromCampfire = Math.hypot(newX - CAMPFIRE.x, newY - CAMPFIRE.y);
-    if (distFromCampfire < CAMPFIRE.radius + playerRadius) {
+    // Campfire obstacle
+    const distFire = Math.hypot(newX - CAMPFIRE.x, newY - CAMPFIRE.y);
+    if (distFire < CAMPFIRE.radius + playerRadius) {
       const angle = Math.atan2(newY - CAMPFIRE.y, newX - CAMPFIRE.x);
       newX = CAMPFIRE.x + Math.cos(angle) * (CAMPFIRE.radius + playerRadius);
       newY = CAMPFIRE.y + Math.sin(angle) * (CAMPFIRE.radius + playerRadius);
     }
 
-    // Check Cabin Walls (AABB collision boxes)
+    // Cabin walls
     CABIN_WALLS.forEach(wall => {
-      // Clamp player center to wall box
       const closestX = Math.max(wall.x, Math.min(newX, wall.x + wall.w));
       const closestY = Math.max(wall.y, Math.min(newY, wall.y + wall.h));
       const distX = newX - closestX;
@@ -786,7 +846,6 @@
       DOM.lightsTimer.textContent = `${remaining}s`;
     }
 
-    // Only host triggers phase switches
     if (State.isCreator && now >= lights.nextSwitch) {
       const nextPhase = lights.phase === 'LIGHT' ? 'BLACKOUT' : 'LIGHT';
       const duration = nextPhase === 'LIGHT' ? 5000 : 3000;
@@ -836,7 +895,7 @@
       }
     }
 
-    // 2. Dead Body Proximity (Report Button)
+    // 2. Dead Body Proximity
     const bodies = Object.values(room.deadBodies || {});
     let nearbyBody = null;
     bodies.forEach(b => {
@@ -851,7 +910,7 @@
       }
     }
 
-    // 3. Campfire Meeting Button (Near center campfire)
+    // 3. Campfire Meeting Button
     const distCampfire = Math.hypot(myX - CAMPFIRE.x, myY - CAMPFIRE.y);
     if (DOM.btnMeeting) {
       DOM.btnMeeting.style.display = (distCampfire < 80) ? 'flex' : 'none';
@@ -860,7 +919,7 @@
       }
     }
 
-    // 4. Kill Target Proximity (for Killer)
+    // 4. Kill Target Proximity
     if (State.mySecretRole === 'KILLER' && DOM.btnKill) {
       let nearbyVictim = null;
       const players = Object.values(room.players || {});
@@ -880,7 +939,7 @@
     }
   }
 
-  // --- ACTIONS: TASK COMPLETION, KILLING, REPORTING & MEETINGS ---
+  // --- ACTIONS ---
 
   function onLocalTaskCompleted(taskId) {
     State.myCompletedTasks.add(taskId);
@@ -900,7 +959,6 @@
       DOM.taskProgressText.textContent = `OBJETIVOS: ${newCompleted} / ${total}`;
     }
 
-    // Check Task Victory
     if (newCompleted >= total) {
       handleGameOver('SURVIVORS_TASKS');
       return;
@@ -917,7 +975,7 @@
     if (State.mySecretRole !== 'KILLER' || State.killCooldown > 0 || !State.isAlive) return;
 
     SombrasAudio.kill();
-    State.killCooldown = 15; // 15s cooldown
+    State.killCooldown = 15;
 
     const bodyId = `body_${victim.id}_${Date.now()}`;
     const newBody = {
@@ -932,12 +990,10 @@
     if (isSinglePlayerMode) {
       singlePlayerState.players[victim.id].alive = false;
       singlePlayerState.deadBodies[bodyId] = newBody;
-      checkVictoryConditions(singlePlayerState);
       return;
     }
 
     if (!currentRoomRef) return;
-    const db = global.FirebaseService.getDb();
     await currentRoomRef.child(`players/${victim.id}/alive`).set(false);
     await currentRoomRef.child(`deadBodies/${bodyId}`).set(newBody);
   }
@@ -980,7 +1036,7 @@
     }
   }
 
-  // --- MEETING & VOTING INTERFACE ---
+  // --- MEETING & VOTING ---
 
   function renderMeetingView(room) {
     const info = room.meetingInfo || { title: 'Reunión de Emergencia', caller: 'Campamento' };
@@ -995,20 +1051,24 @@
         const isDead = (p.alive === false);
         const hasVotedForThis = Object.values(votes).filter(v => v === p.id).length;
         const myVoteThis = State.votedFor === p.id;
+        const spriteObj = global.SombrasAssets.Assets.characterSprites[p.charId || 'char_red'];
+        const iconUrl = spriteObj ? spriteObj.iconDataUrl : '';
 
         return `
-          <div class="meeting-player-card ${isDead ? 'dead' : ''} ${myVoteThis ? 'voted' : ''}" data-uid="${p.id}" style="background: rgba(15, 23, 42, 0.85); border: 2px solid ${myVoteThis ? 'var(--accent-amber)' : 'var(--border-color)'}; border-radius: var(--radius-md); padding: 12px; display: flex; align-items: center; gap: 12px; cursor: ${isDead || !State.isAlive ? 'default' : 'pointer'};">
-            <span style="font-size: 28px;">${isDead ? '💀' : '👤'}</span>
-            <div style="flex: 1;">
-              <div style="font-weight: 800; font-size: 15px; color: ${isDead ? 'var(--text-dim)' : 'var(--text-main)'};">
+          <div class="meeting-player-card ${isDead ? 'dead' : ''} ${myVoteThis ? 'voted' : ''}" data-uid="${p.id}" style="background: rgba(15, 23, 42, 0.85); border: 2px solid ${myVoteThis ? 'var(--accent-amber)' : 'var(--border-color)'}; border-radius: var(--radius-md); padding: 10px 14px; display: flex; align-items: center; gap: 10px; cursor: ${isDead || !State.isAlive ? 'default' : 'pointer'};">
+            <div style="width: 44px; height: 44px; border-radius: 50%; overflow: hidden; background: #0f172a; border: 2px solid #fff; flex-shrink: 0;">
+              ${iconUrl ? `<img src="${iconUrl}" style="width: 100%; height: 100%; object-fit: contain;">` : `👤`}
+            </div>
+            <div style="flex: 1; overflow: hidden;">
+              <div style="font-weight: 800; font-size: 14px; color: ${isDead ? 'var(--text-dim)' : 'var(--text-main)'}; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">
                 ${p.name} ${p.id === State.myUid ? '(Tú)' : ''}
               </div>
-              <div style="font-size: 11px; color: ${isDead ? 'var(--accent-rose)' : 'var(--accent-emerald)'};">
-                ${isDead ? 'FALLECIDO' : 'VIVO'}
+              <div style="font-size: 11px; font-weight: 700; color: ${isDead ? 'var(--accent-rose)' : 'var(--accent-emerald)'};">
+                ${isDead ? '💀 FALLECIDO' : '💚 VIVO'}
               </div>
             </div>
             ${hasVotedForThis > 0 ? `<span class="difficulty-badge diff-EXTREMO">🗳️ ${hasVotedForThis}</span>` : ''}
-            ${!isDead && State.isAlive && !State.votedFor ? `<button class="btn-vote-trigger btn" style="font-size: 12px; padding: 6px 12px;">Votar</button>` : ''}
+            ${!isDead && State.isAlive && !State.votedFor ? `<button class="btn" style="font-size: 12px; padding: 6px 12px; background: rgba(56, 189, 248, 0.15); border-color: var(--primary);">Votar</button>` : ''}
           </div>
         `;
       }).join('');
@@ -1046,7 +1106,6 @@
 
     if (currentRoomRef) {
       await currentRoomRef.child(`votes/${State.myUid}`).set(targetUid);
-      // Check if all living players have voted
       const snap = await currentRoomRef.once('value');
       const r = snap.val();
       const living = Object.values(r.players || {}).filter(p => p.alive !== false);
@@ -1083,7 +1142,6 @@
       const exiledPlayer = room.players[exiledUid];
       if (exiledPlayer) {
         exiledPlayer.alive = false;
-        // IMPORTANT: Role is KEPT SECRET!
         exileMessage = `¡${exiledPlayer.name} ha sido expulsado del campamento!`;
       }
     } else if (exiledUid === 'SKIP') {
@@ -1092,11 +1150,6 @@
 
     showToast(exileMessage, '🚪');
 
-    // Check Victory
-    const checkWin = checkVictoryConditions(room);
-    if (checkWin) return;
-
-    // Return to Game
     setTimeout(async () => {
       if (isSinglePlayerMode) {
         singlePlayerState.status = 'PLAYING';
@@ -1112,19 +1165,7 @@
     }, 2500);
   }
 
-  function checkVictoryConditions(room) {
-    const players = Object.values(room.players || {});
-    // In multiplayer, check private roles count if host
-    // or evaluate alive killers vs survivors
-    // If survivors complete all tasks -> Survivors WIN
-    if ((room.completedTasksCount || 0) >= (room.totalTasks || 12)) {
-      handleGameOver('SURVIVORS_TASKS');
-      return true;
-    }
-    return false;
-  }
-
-  async function handleGameOver(winReason) {
+  function handleGameOver(winReason) {
     stopCanvasLoop();
     const isSurvivorsWin = winReason.startsWith('SURVIVORS');
 
@@ -1144,7 +1185,6 @@
         : 'Los asesinos eliminaron a los supervivientes.';
     }
 
-    // Role Reveal Table
     const room = isSinglePlayerMode ? singlePlayerState : State.room;
     if (room && DOM.podiumRoleList) {
       const players = Object.values(room.players || {});
@@ -1161,14 +1201,13 @@
     showView('results');
   }
 
-  // --- RENDER 2D CANVAS: MAP, PLAYERS, DEAD BODIES & LIGHTING MASK ---
+  // --- 2D CANVAS RENDERING ---
 
   function render() {
     if (!DOM.ctx || !DOM.canvas) return;
     const ctx = DOM.ctx;
     const canvas = DOM.canvas;
 
-    // Resize canvas to client display
     if (canvas.width !== canvas.clientWidth || canvas.height !== canvas.clientHeight) {
       canvas.width = canvas.clientWidth;
       canvas.height = canvas.clientHeight;
@@ -1177,11 +1216,9 @@
     const cw = canvas.width;
     const ch = canvas.height;
 
-    // Camera offsets (center on LocalPlayer)
     const camX = cw / 2 - LocalPlayer.x;
     const camY = ch / 2 - LocalPlayer.y;
 
-    // Clear frame
     ctx.clearRect(0, 0, cw, ch);
 
     ctx.save();
@@ -1254,7 +1291,7 @@
 
     ctx.restore();
 
-    // 6. DYNAMIC FIELD OF VISION & LIGHTING MASK
+    // 6. ATMOSPHERIC NIGHT & TORCHLIGHT LIGHTING MASK
     renderLightingMask(ctx, cw, ch, room);
   }
 
@@ -1262,10 +1299,15 @@
     ctx.save();
     ctx.translate(x, y);
 
-    // Walking bobbing effect
+    // Drop shadow under feet
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.4)';
+    ctx.beginPath();
+    ctx.ellipse(0, 16, 16, 7, 0, 0, Math.PI * 2);
+    ctx.fill();
+
+    // Walking animation bobbing
     const bobY = isMoving ? Math.sin(walkCycle) * 3 : 0;
 
-    // Flip horizontally based on facing direction
     if (facing < 0) ctx.scale(-1, 1);
 
     const spriteObj = global.SombrasAssets.Assets.characterSprites[charId];
@@ -1278,15 +1320,15 @@
       ctx.fill();
     }
 
-    if (facing < 0) ctx.scale(-1, 1); // unflip for text
+    if (facing < 0) ctx.scale(-1, 1);
 
-    // Name tag
+    // Nametag
     ctx.font = 'bold 11px Inter, sans-serif';
     ctx.fillStyle = '#ffffff';
     ctx.textAlign = 'center';
     ctx.shadowColor = '#000000';
     ctx.shadowBlur = 4;
-    ctx.fillText(name, 0, 24 + bobY);
+    ctx.fillText(name, 0, 28 + bobY);
 
     ctx.restore();
   }
@@ -1296,45 +1338,60 @@
     const isBlackout = lights.phase === 'BLACKOUT';
     const isKiller = State.mySecretRole === 'KILLER';
 
-    // Radius sizes
-    let playerRadius = 180;
-    if (isBlackout) {
-      playerRadius = isKiller ? 220 : 38; // Survivors almost pitch dark in blackout
-    }
+    // Camera coordinates
+    const camX = cw / 2 - LocalPlayer.x;
+    const camY = ch / 2 - LocalPlayer.y;
 
-    // Dark mask canvas overlay
     ctx.save();
-    ctx.fillStyle = isBlackout && !isKiller ? 'rgba(2, 6, 23, 0.98)' : 'rgba(2, 6, 23, 0.92)';
+
+    // 1. Soft night overlay (45% darkness in light phase, 85% in blackout)
+    ctx.fillStyle = isBlackout && !isKiller ? 'rgba(2, 6, 23, 0.88)' : 'rgba(2, 6, 23, 0.42)';
     ctx.fillRect(0, 0, cw, ch);
 
-    // Punch torchlight circle around player center (cw/2, ch/2)
+    // 2. Cut out torchlight and ambient lanterns
     ctx.globalCompositeOperation = 'destination-out';
 
-    const grad = ctx.createRadialGradient(cw / 2, ch / 2, playerRadius * 0.4, cw / 2, ch / 2, playerRadius);
-    grad.addColorStop(0, 'rgba(0, 0, 0, 1)');
-    grad.addColorStop(1, 'rgba(0, 0, 0, 0)');
+    // Player Torchlight
+    let playerRadius = 220;
+    if (isBlackout) {
+      playerRadius = isKiller ? 260 : 60;
+    }
 
-    ctx.fillStyle = grad;
+    const playerGrad = ctx.createRadialGradient(cw / 2, ch / 2, playerRadius * 0.35, cw / 2, ch / 2, playerRadius);
+    playerGrad.addColorStop(0, 'rgba(0, 0, 0, 1)');
+    playerGrad.addColorStop(1, 'rgba(0, 0, 0, 0)');
+    ctx.fillStyle = playerGrad;
     ctx.beginPath();
     ctx.arc(cw / 2, ch / 2, playerRadius, 0, Math.PI * 2);
     ctx.fill();
 
-    // Campfire glow in the center of the world
-    const camX = cw / 2 - LocalPlayer.x;
-    const camY = ch / 2 - LocalPlayer.y;
-    const screenFireX = CAMPFIRE.x + camX;
-    const screenFireY = CAMPFIRE.y + camY;
-    const fireRadius = isBlackout ? 45 : 120;
+    // Campfire & Lantern glows
+    if (!isBlackout || isKiller) {
+      LANTERNS.forEach(l => {
+        const sx = l.x + camX;
+        const sy = l.y + camY;
+        const rad = isBlackout ? l.radius * 0.4 : l.radius;
 
-    const fireGrad = ctx.createRadialGradient(screenFireX, screenFireY, fireRadius * 0.2, screenFireX, screenFireY, fireRadius);
-    fireGrad.addColorStop(0, 'rgba(0, 0, 0, 0.9)');
-    fireGrad.addColorStop(1, 'rgba(0, 0, 0, 0)');
-    ctx.fillStyle = fireGrad;
-    ctx.beginPath();
-    ctx.arc(screenFireX, screenFireY, fireRadius, 0, Math.PI * 2);
-    ctx.fill();
+        const lGrad = ctx.createRadialGradient(sx, sy, rad * 0.2, sx, sy, rad);
+        lGrad.addColorStop(0, 'rgba(0, 0, 0, 0.9)');
+        lGrad.addColorStop(1, 'rgba(0, 0, 0, 0)');
+        ctx.fillStyle = lGrad;
+        ctx.beginPath();
+        ctx.arc(sx, sy, rad, 0, Math.PI * 2);
+        ctx.fill();
+      });
+    }
 
     ctx.restore();
+
+    // Blackout alert red flash on screen borders
+    if (isBlackout) {
+      ctx.save();
+      ctx.strokeStyle = 'rgba(225, 29, 72, 0.35)';
+      ctx.lineWidth = 12;
+      ctx.strokeRect(0, 0, cw, ch);
+      ctx.restore();
+    }
   }
 
   function syncMyPosition() {
@@ -1354,7 +1411,7 @@
     }
   }
 
-  // --- FIREBASE SYNC & LISTENERS ---
+  // --- REALTIME LISTENERS ---
 
   function attachRoomListeners(roomRef, myUid) {
     const db = global.FirebaseService.getDb();
@@ -1398,17 +1455,28 @@
     if (DOM.waitingKillerBadge) DOM.waitingKillerBadge.textContent = `${room.killerCount || 1} Asesino(s)`;
 
     if (DOM.waitingPlayersList) {
-      DOM.waitingPlayersList.innerHTML = playerList.map(p => `
-        <div class="player-slot-card ready" style="padding: 10px 14px; display: flex; align-items: center; gap: 10px;">
-          <span class="status-dot ${p.connected ? 'online' : 'offline'}"></span>
-          <span style="font-weight: 700; flex: 1;">${p.name} ${p.id === State.myUid ? '(Tú)' : ''}</span>
-          ${p.id === room.creatorId ? '<span class="player-badge badge-host">👑 Anfitrión</span>' : '<span class="player-badge badge-guest">Superviviente</span>'}
-        </div>
-      `).join('');
+      DOM.waitingPlayersList.innerHTML = playerList.map(p => {
+        const spriteObj = global.SombrasAssets.Assets.characterSprites[p.charId || 'char_red'];
+        const iconUrl = spriteObj ? spriteObj.iconDataUrl : '';
+
+        return `
+          <div class="player-slot-card ready" style="padding: 10px 14px; display: flex; align-items: center; gap: 10px;">
+            <span class="status-dot ${p.connected ? 'online' : 'offline'}"></span>
+            <div style="width: 36px; height: 36px; border-radius: 50%; overflow: hidden; background: #0f172a; border: 2px solid #fff; flex-shrink: 0;">
+              ${iconUrl ? `<img src="${iconUrl}" style="width: 100%; height: 100%; object-fit: contain;">` : `👤`}
+            </div>
+            <span style="font-weight: 700; flex: 1;">${p.name} ${p.id === State.myUid ? '(Tú)' : ''}</span>
+            ${p.id === room.creatorId ? '<span class="player-badge badge-host">👑 Anfitrión</span>' : '<span class="player-badge badge-guest">Superviviente</span>'}
+          </div>
+        `;
+      }).join('');
     }
 
     if (DOM.btnHostStart) {
       DOM.btnHostStart.style.display = State.isCreator ? 'flex' : 'none';
+      DOM.btnHostStart.innerHTML = playerList.length === 1
+        ? '<span>🌲</span> INICIAR (SOLO VS 3 BOTS)'
+        : `<span>🌲</span> INICIAR PARTIDA (${playerList.length} JUGADORES)`;
     }
 
     showView('waiting');
@@ -1435,10 +1503,9 @@
     showView('lobby');
   }
 
-  // --- INITIALIZATION & CONTROLS BINDING ---
+  // --- CONTROLS & EVENTS ---
 
   function initControls() {
-    // Keyboard Controls
     window.addEventListener('keydown', e => {
       if (['w', 'a', 's', 'd', 'ArrowUp', 'ArrowLeft', 'ArrowDown', 'ArrowRight'].includes(e.key)) {
         Keys[e.key] = true;
@@ -1451,7 +1518,6 @@
       }
     });
 
-    // Touch Virtual Joystick
     if (DOM.joystickArea && DOM.joystickKnob) {
       const area = DOM.joystickArea;
       const knob = DOM.joystickKnob;
@@ -1501,34 +1567,9 @@
     }
   }
 
-  function initCharacterPicker() {
-    if (!DOM.charSelectGrid) return;
-    const chars = global.SombrasAssets.CHARACTERS;
-
-    DOM.charSelectGrid.innerHTML = chars.map(c => `
-      <div class="char-picker-card ${c.id === State.selectedCharId ? 'selected' : ''}" data-char-id="${c.id}" style="display: flex; flex-direction: column; align-items: center; gap: 4px; padding: 8px; background: rgba(15, 23, 42, 0.7); border: 2px solid ${c.id === State.selectedCharId ? c.color : 'transparent'}; border-radius: var(--radius-md); cursor: pointer;">
-        <div style="width: 48px; height: 48px; border-radius: 50%; background: ${c.color}; display: flex; align-items: center; justify-content: center; font-size: 20px;">
-          👤
-        </div>
-        <span style="font-size: 11px; font-weight: 700; color: var(--text-main);">${c.name}</span>
-      </div>
-    `).join('');
-
-    DOM.charSelectGrid.querySelectorAll('.char-picker-card').forEach(card => {
-      card.addEventListener('click', () => {
-        const charId = card.dataset.charId;
-        State.selectedCharId = charId;
-        DOM.charSelectGrid.querySelectorAll('.char-picker-card').forEach(b => {
-          b.style.borderColor = (b.dataset.charId === charId) ? 'var(--primary)' : 'transparent';
-        });
-        SombrasAudio.click();
-      });
-    });
-  }
-
   function initEvents() {
     initControls();
-    initCharacterPicker();
+    renderCharacterPicker();
 
     if (DOM.inputNickname) {
       DOM.inputNickname.value = getPlayerName();
@@ -1605,6 +1646,10 @@
     if (DOM.btnReturnMenu) DOM.btnReturnMenu.addEventListener('click', leaveRoom);
   }
 
+  function onAssetsReady() {
+    renderCharacterPicker();
+  }
+
   function init() {
     cacheDOM();
     initEvents();
@@ -1615,7 +1660,8 @@
     createRoom,
     joinRoom,
     leaveRoom,
-    showView
+    showView,
+    onAssetsReady
   };
 
   if (typeof module !== 'undefined' && module.exports) {

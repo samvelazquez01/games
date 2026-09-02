@@ -1,0 +1,45 @@
+{
+  "rules": {
+    "rooms": {
+      "$roomId": {
+        ".read": "auth != null",
+        ".write": "auth != null && (!data.exists() || data.child('hostId').val() === auth.uid || data.child('players/' + auth.uid).exists() || (data.child('status').val() === 'WAITING' && !data.child('players/' + auth.uid).exists()))",
+        
+        "puzzle": {
+          ".validate": "newData.isString() && newData.val().length === 81"
+        },
+        "solutionHash": {
+          ".validate": "newData.isString() && newData.val().length === 64"
+        },
+        "solutionSalt": {
+          ".validate": "newData.isString()"
+        },
+        "difficulty": {
+          ".validate": "newData.val() === 'EXPERTO' || newData.val() === 'EXTREMO' || newData.val() === 'IMPOSIBLE'"
+        },
+        "status": {
+          ".validate": "newData.val() === 'WAITING' || newData.val() === 'STARTING' || newData.val() === 'PLAYING' || newData.val() === 'FINISHED' || newData.val() === 'ABANDONED'"
+        },
+
+        "players": {
+          "$uid": {
+            ".write": "auth != null && auth.uid === $uid",
+            ".validate": "newData.hasChildren(['name', 'connected', 'progress'])",
+            "name": {
+              ".validate": "newData.isString() && newData.val().length <= 25"
+            },
+            "progress": {
+              ".validate": "newData.isNumber() && newData.val() >= 0 && newData.val() <= 100"
+            },
+            "filledCount": {
+              ".validate": "newData.isNumber() && newData.val() >= 0 && newData.val() <= 81"
+            },
+            "connected": {
+              ".validate": "newData.isBoolean()"
+            }
+          }
+        }
+      }
+    }
+  }
+}

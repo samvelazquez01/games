@@ -1,0 +1,349 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>Sudoku Multijugador Online en Tiempo Real</title>
+  <meta name="description" content="Juega al Sudoku online en tiempo real contra amigos. Niveles Experto, Extremo e Imposible con sincronización en vivo.">
+  
+  <!-- Fonts -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@600;700;800&display=swap" rel="stylesheet">
+  
+  <!-- Stylesheet -->
+  <link rel="stylesheet" href="style.css">
+  
+  <!-- Firebase App & Database Compat SDKs -->
+  <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-auth-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-database-compat.js"></script>
+</head>
+<body>
+
+  <div class="app-container">
+    
+    <!-- HEADER -->
+    <header class="app-header">
+      <div class="logo-area">
+        <span class="logo-icon">⚡</span>
+        <div>
+          <h1 class="logo-title">SUDOKU</h1>
+        </div>
+        <span class="logo-badge">ONLINE</span>
+      </div>
+
+      <div class="header-actions">
+        <button id="btn-sound" class="icon-btn" title="Sonido" aria-label="Alternar Sonido">🔊</button>
+        <button id="btn-settings" class="icon-btn" title="Configurar Firebase" aria-label="Ajustes">⚙️</button>
+      </div>
+    </header>
+
+    <!-- =========================================================================
+         VIEW 1: LOBBY & MENU
+         ========================================================================= -->
+    <section id="view-lobby" class="view-section active">
+      
+      <!-- User Profile Card -->
+      <div class="glass-card">
+        <div class="input-group">
+          <label class="input-label" for="input-nickname">Tu Nombre de Jugador</label>
+          <input type="text" id="input-nickname" class="text-input" placeholder="Tu Apodo..." maxlength="20">
+        </div>
+
+        <div class="input-group">
+          <label class="input-label">Nivel de Dificultad</label>
+          <div class="difficulty-grid">
+            <div class="diff-card diff-experto selected" data-diff="EXPERTO">
+              <span class="diff-name" style="color: var(--accent-cyan);">EXPERTO</span>
+              <span class="diff-tag">Técnicas avanzadas</span>
+            </div>
+            <div class="diff-card diff-extremo" data-diff="EXTREMO">
+              <span class="diff-name" style="color: var(--accent-amber);">EXTREMO</span>
+              <span class="diff-tag">Peces y Alas</span>
+            </div>
+            <div class="diff-card diff-imposible" data-diff="IMPOSIBLE">
+              <span class="diff-name" style="color: var(--accent-purple);">IMPOSIBLE</span>
+              <span class="diff-tag">Cadenas lógicas</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Solo Quickplay -->
+        <button id="btn-solo-play" class="btn btn-emerald">
+          <span>🎯</span> JUGAR EN SOLITARIO
+        </button>
+
+        <div class="divider">O MULTIJUGADOR EN TIEMPO REAL</div>
+
+        <!-- Create Room -->
+        <button id="btn-create-room" class="btn btn-primary">
+          <span>⚔️</span> CREAR SALA MULTIJUGADOR
+        </button>
+
+        <!-- Join Room -->
+        <div class="input-group">
+          <label class="input-label" for="input-join-code">Unirse con Código de Sala</label>
+          <div class="btn-group">
+            <input type="text" id="input-join-code" class="text-input code-input" placeholder="X7K92P" maxlength="6" style="flex: 1.2;">
+            <button id="btn-join-room" class="btn" style="flex: 1;">
+              <span>🚀</span> UNIRSE
+            </button>
+          </div>
+        </div>
+      </div>
+
+    </section>
+
+    <!-- =========================================================================
+         VIEW 2: WAITING ROOM LOBBY
+         ========================================================================= -->
+    <section id="view-waiting" class="view-section">
+      
+      <div class="glass-card">
+        <div style="display: flex; justify-content: space-between; align-items: center;">
+          <h2 class="card-title"><span>👥</span> Sala de Espera</h2>
+          <span id="waiting-diff-badge" class="difficulty-badge diff-EXPERTO">EXPERTO</span>
+        </div>
+
+        <div class="room-code-display">
+          <span class="room-code-label">Código de Invitación</span>
+          <span id="display-room-code" class="room-code-text">------</span>
+          <div class="btn-group" style="width: 100%; margin-top: 8px;">
+            <button id="btn-copy-code" class="btn" style="font-size: 13px; padding: 8px 12px;">
+              <span>📋</span> Copiar Código
+            </button>
+            <button id="btn-share-room" class="btn" style="font-size: 13px; padding: 8px 12px;">
+              <span>🔗</span> Compartir Enlace
+            </button>
+          </div>
+        </div>
+
+        <!-- Players Slot -->
+        <div class="players-lobby-grid">
+          <div class="player-slot-card ready">
+            <div class="player-avatar">👑</div>
+            <div id="slot-host-name" class="player-slot-name">Anfitrión</div>
+            <span class="player-badge badge-host">Creador</span>
+          </div>
+
+          <div id="slot-guest-card" class="player-slot-card">
+            <div class="player-avatar">🎮</div>
+            <div id="slot-guest-name" class="player-slot-name">Esperando jugador...</div>
+            <span class="player-badge badge-waiting">Rival</span>
+          </div>
+        </div>
+
+        <button id="btn-start-multiplayer" class="btn btn-primary" style="display: none;">
+          <span>⚔️</span> COMENZAR PARTIDA
+        </button>
+
+        <button id="btn-leave-waiting" class="btn btn-danger">
+          <span>🚪</span> Abandonar Sala
+        </button>
+      </div>
+
+    </section>
+
+    <!-- =========================================================================
+         VIEW 3: GAME ARENA
+         ========================================================================= -->
+    <section id="view-game" class="view-section">
+      
+      <!-- Game HUD -->
+      <div class="game-hud">
+        <div class="hud-top-bar">
+          <span id="game-diff-badge" class="difficulty-badge diff-EXPERTO">EXPERTO</span>
+          <div class="timer-box">
+            <span class="timer-icon">⏱️</span>
+            <span id="game-timer">00:00</span>
+          </div>
+          <button id="btn-mode-toggle" class="btn" style="padding: 4px 10px; font-size: 12px;">
+            <span class="action-label">Competitivo</span>
+          </button>
+        </div>
+
+        <!-- Duel Progress Bars -->
+        <div class="duel-bars-container">
+          <!-- Player Progress -->
+          <div class="player-progress-item">
+            <div class="progress-header">
+              <span class="player-tag-name">
+                <span class="status-dot online"></span>
+                <span id="my-name-tag">Tú</span>
+              </span>
+              <span id="my-progress-text" style="font-weight: 700; color: var(--primary);">0% (0/55)</span>
+            </div>
+            <div class="progress-track">
+              <div id="my-progress-fill" class="progress-fill fill-player" style="width: 0%;"></div>
+            </div>
+          </div>
+
+          <!-- Opponent Progress (Multiplayer) -->
+          <div id="opponent-progress-container" class="player-progress-item" style="display: none;">
+            <div class="progress-header">
+              <span class="player-tag-name">
+                <span id="opponent-status-dot" class="status-dot online"></span>
+                <span id="opponent-name-tag">Rival</span>
+              </span>
+              <span id="opponent-progress-text" style="font-weight: 700; color: var(--accent-purple);">0% (0/55)</span>
+            </div>
+            <div class="progress-track">
+              <div id="opponent-progress-fill" class="progress-fill fill-opponent" style="width: 0%;"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Sudoku Board -->
+      <div class="board-wrapper">
+        <div id="sudoku-grid" class="sudoku-grid">
+          <!-- 81 cells dynamically generated -->
+        </div>
+      </div>
+
+      <!-- Controls & Virtual Keypad -->
+      <div class="controls-container">
+        <!-- Action Row -->
+        <div class="action-bar">
+          <button id="btn-undo" class="action-btn" title="Deshacer (Ctrl+Z)">
+            <span class="action-icon">↩️</span>
+            <span>Deshacer</span>
+          </button>
+          <button id="btn-redo" class="action-btn" title="Rehacer (Ctrl+Y)">
+            <span class="action-icon">↪️</span>
+            <span>Rehacer</span>
+          </button>
+          <button id="btn-erase" class="action-btn" title="Borrar (Retroceso/Delete)">
+            <span class="action-icon">🧹</span>
+            <span>Borrar</span>
+          </button>
+          <button id="btn-pencil" class="action-btn" title="Modo Notas / Candidatos (Espacio)">
+            <span class="action-icon">✏️</span>
+            <span>Notas</span>
+          </button>
+        </div>
+
+        <!-- 1-9 Digits Keypad -->
+        <div class="numpad-grid">
+          <button class="num-btn" data-num="1">1</button>
+          <button class="num-btn" data-num="2">2</button>
+          <button class="num-btn" data-num="3">3</button>
+          <button class="num-btn" data-num="4">4</button>
+          <button class="num-btn" data-num="5">5</button>
+          <button class="num-btn" data-num="6">6</button>
+          <button class="num-btn" data-num="7">7</button>
+          <button class="num-btn" data-num="8">8</button>
+          <button class="num-btn" data-num="9">9</button>
+        </div>
+
+        <button id="btn-abandon-game" class="btn btn-danger" style="margin-top: 4px; padding: 10px;">
+          Salir al Menú
+        </button>
+      </div>
+
+    </section>
+
+  </div>
+
+  <!-- =========================================================================
+       MODAL: GAME OVER / VICTORY
+       ========================================================================= -->
+  <div id="modal-game-over" class="modal-overlay">
+    <div class="modal-card">
+      <div id="game-over-icon" class="modal-icon">🏆</div>
+      <h2 id="game-over-title" class="modal-title">¡HAS GANADO!</h2>
+      <p id="game-over-subtitle" class="modal-subtitle">¡Felicitaciones! Has completado el Sudoku con éxito.</p>
+
+      <div class="stats-summary-grid">
+        <div class="stat-item">
+          <span id="stat-time" class="stat-val">00:00</span>
+          <span class="stat-lbl">Tiempo Final</span>
+        </div>
+        <div class="stat-item">
+          <span id="stat-diff" class="stat-val">EXPERTO</span>
+          <span class="stat-lbl">Dificultad</span>
+        </div>
+        <div class="stat-item">
+          <span id="stat-tech" class="stat-val">X-Wing</span>
+          <span class="stat-lbl">Técnica Clave</span>
+        </div>
+        <div class="stat-item">
+          <span id="stat-score" class="stat-val">1200</span>
+          <span class="stat-lbl">Puntaje Lógico</span>
+        </div>
+      </div>
+
+      <div class="btn-group">
+        <button id="btn-rematch" class="btn btn-primary" style="flex: 1.2;">
+          <span>🔄</span> Nueva Partida
+        </button>
+        <button id="btn-game-over-menu" class="btn" style="flex: 1;">
+          Menú
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- =========================================================================
+       MODAL: LOADING GENERATOR
+       ========================================================================= -->
+  <div id="modal-loading" class="modal-overlay">
+    <div class="modal-card" style="max-width: 360px;">
+      <div class="loading-box">
+        <div class="spinner"></div>
+        <h3 id="loading-text" class="modal-title" style="font-size: 18px;">Generando Sudoku...</h3>
+        <p class="modal-subtitle">Buscando solución única con análisis lógico.</p>
+        <div class="progress-track" style="width: 100%; height: 6px; margin-top: 8px;">
+          <div id="loading-progress-bar" class="progress-fill fill-player" style="width: 15%;"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- =========================================================================
+       MODAL: SETTINGS & FIREBASE CONFIG
+       ========================================================================= -->
+  <div id="modal-settings" class="modal-overlay">
+    <div class="modal-card">
+      <h2 class="modal-title"><span>⚙️</span> Configurar Firebase</h2>
+      <p class="modal-subtitle">Configura tus credenciales de Firebase para habilitar el multijugador online en GitHub Pages.</p>
+
+      <div style="display: flex; flex-direction: column; gap: 12px; text-align: left;">
+        <div class="input-group">
+          <label class="input-label" for="setting-api-key">API Key</label>
+          <input type="text" id="setting-api-key" class="text-input" placeholder="AIzaSy...">
+        </div>
+
+        <div class="input-group">
+          <label class="input-label" for="setting-db-url">Realtime Database URL</label>
+          <input type="text" id="setting-db-url" class="text-input" placeholder="https://tu-proyecto-default-rtdb.firebaseio.com">
+        </div>
+
+        <div class="input-group">
+          <label class="input-label" for="setting-project-id">Project ID</label>
+          <input type="text" id="setting-project-id" class="text-input" placeholder="tu-proyecto-id">
+        </div>
+      </div>
+
+      <div class="btn-group">
+        <button id="btn-save-settings" class="btn btn-emerald" style="flex: 1.2;">
+          Guardar y Conectar
+        </button>
+        <button id="btn-close-settings" class="btn" style="flex: 1;">
+          Cerrar
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Toast Notification Area -->
+  <div id="toast-container" class="toast-container"></div>
+
+  <!-- Application Logic Scripts -->
+  <script src="firebase-config.js"></script>
+  <script src="sudoku.js"></script>
+  <script src="multiplayer.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>

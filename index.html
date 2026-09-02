@@ -3,13 +3,13 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-  <title>Sudoku Multijugador Online en Tiempo Real</title>
-  <meta name="description" content="Juega al Sudoku online en tiempo real contra amigos. Niveles Experto, Extremo e Imposible con sincronización en vivo.">
+  <title>GAMES ONLINE - Plataforma Multijugador en Tiempo Real</title>
+  <meta name="description" content="Plataforma de juegos multijugador online en tiempo real: Sudoku, STOP (Tutti Frutti / Basta) y Guerra (Juego de cartas para 1-4 jugadores) con Firebase.">
   
   <!-- Fonts -->
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@600;700;800&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&family=JetBrains+Mono:wght@600;700;800;900&display=swap" rel="stylesheet">
   
   <!-- Stylesheet -->
   <link rel="stylesheet" href="style.css">
@@ -25,253 +25,918 @@
     
     <!-- HEADER -->
     <header class="app-header">
-      <div class="logo-area">
-        <span class="logo-icon">⚡</span>
+      <div class="logo-area" style="cursor: pointer;" onclick="if(window.PlatformService) window.PlatformService.switchGame(null);">
+        <span class="logo-icon">🎮</span>
         <div>
-          <h1 class="logo-title">SUDOKU</h1>
+          <h1 class="logo-title">GAMES</h1>
         </div>
         <span class="logo-badge">ONLINE</span>
       </div>
 
       <div class="header-actions">
+        <button id="btn-nav-games" class="btn" style="display: none; padding: 6px 12px; font-size: 13px;">
+          <span>🏠</span> Juegos
+        </button>
+        <button id="btn-rules" class="icon-btn" title="Reglas y Cómo Jugar" aria-label="Reglas">📖</button>
         <button id="btn-sound" class="icon-btn" title="Sonido" aria-label="Alternar Sonido">🔊</button>
         <button id="btn-settings" class="icon-btn" title="Configurar Firebase" aria-label="Ajustes">⚙️</button>
       </div>
     </header>
 
     <!-- =========================================================================
-         VIEW 1: LOBBY & MENU
+         PORTAL: MAIN MENU / CATALOGO DE JUEGOS
          ========================================================================= -->
-    <section id="view-lobby" class="view-section active">
+    <section id="view-portal" class="view-section active">
       
-      <!-- User Profile Card -->
-      <div class="glass-card">
+      <!-- Player Profile Card -->
+      <div class="glass-card" style="padding: 18px 22px;">
         <div class="input-group">
-          <label class="input-label" for="input-nickname">Tu Nombre de Jugador</label>
-          <input type="text" id="input-nickname" class="text-input" placeholder="Tu Apodo..." maxlength="20">
+          <label class="input-label" for="portal-nickname-input">Tu Nombre de Jugador</label>
+          <div style="display: flex; gap: 10px; align-items: center;">
+            <span style="font-size: 24px;">👤</span>
+            <input type="text" id="portal-nickname-input" class="text-input" placeholder="Tu Apodo..." maxlength="20" style="flex: 1;">
+          </div>
+        </div>
+      </div>
+
+      <div style="display: flex; justify-content: space-between; align-items: center; margin: 4px 0;">
+        <h2 style="font-size: 16px; font-weight: 800; color: var(--text-muted); text-transform: uppercase; letter-spacing: 1px;">
+          Catálogo de Juegos
+        </h2>
+        <span class="logo-badge" style="background: var(--bg-card); color: var(--primary); border: 1px solid var(--border-color);">
+          3 Juegos Disponibles
+        </span>
+      </div>
+
+      <!-- Games Catalog Grid -->
+      <div class="portal-games-grid">
+        
+        <!-- Game 1: SUDOKU -->
+        <div id="portal-card-sudoku" class="portal-game-card card-sudoku">
+          <div class="portal-game-icon" style="color: var(--accent-cyan); font-size: 38px;">
+            🧩
+          </div>
+          <div class="portal-game-info">
+            <div class="portal-game-title">
+              <span>SUDOKU ONLINE</span>
+              <span class="difficulty-badge diff-EXPERTO" style="font-size: 9px; padding: 2px 6px;">1-2 Jugadores</span>
+            </div>
+            <p class="portal-game-desc">
+              Solitario, En Pareja (cooperativo compartido) o Duelo. Niveles Experto, Extremo e Imposible con 3 vidas.
+            </p>
+            <div class="portal-game-tags">
+              <span class="game-tag">🤝 En Pareja</span>
+              <span class="game-tag">⚔️ Versus</span>
+              <span class="game-tag">🔥 Imposible</span>
+            </div>
+          </div>
+          <span style="font-size: 20px; color: var(--primary);">➡️</span>
         </div>
 
-        <div class="input-group">
-          <label class="input-label">Modo Multijugador</label>
-          <div class="game-mode-grid">
-            <div class="mode-card mode-coop selected" data-mode="COOP">
-              <span class="mode-name">🤝 En Pareja</span>
-              <span class="mode-desc">Tablero compartido en vivo (3 errores en equipo)</span>
+        <!-- Game 2: STOP -->
+        <div id="portal-card-stop" class="portal-game-card card-stop">
+          <div class="portal-game-icon" style="color: var(--accent-rose); font-size: 38px;">
+            🛑
+          </div>
+          <div class="portal-game-info">
+            <div class="portal-game-title">
+              <span>STOP ONLINE</span>
+              <span class="difficulty-badge" style="background: rgba(244, 63, 94, 0.2); color: var(--accent-rose); border: 1px solid var(--accent-rose); font-size: 9px; padding: 2px 6px;">Multijugador</span>
             </div>
-            <div class="mode-card mode-versus" data-mode="VERSUS">
-              <span class="mode-name">⚔️ Duelo</span>
-              <span class="mode-desc">Tableros individuales (Carrera contra el rival)</span>
+            <p class="portal-game-desc">
+              El clásico Tutti Frutti / Basta para cualquier cantidad de jugadores. 5 rondas, Capitán, cuenta regresiva de 5s y puntuación en vivo.
+            </p>
+            <div class="portal-game-tags">
+              <span class="game-tag">👥 N Jugadores</span>
+              <span class="game-tag">👑 Capitán</span>
+              <span class="game-tag">⏱️ 5 Rondas</span>
             </div>
+          </div>
+          <span style="font-size: 20px; color: var(--accent-rose);">➡️</span>
+        </div>
+
+        <!-- Game 3: GUERRA -->
+        <div id="portal-card-guerra" class="portal-game-card card-guerra">
+          <div class="portal-game-icon" style="color: var(--accent-amber); font-size: 38px;">
+            🃏
+          </div>
+          <div class="portal-game-info">
+            <div class="portal-game-title">
+              <span>GUERRA (CARTAS)</span>
+              <span class="difficulty-badge" style="background: rgba(245, 158, 11, 0.2); color: var(--accent-amber); border: 1px solid var(--accent-amber); font-size: 9px; padding: 2px 6px;">1-4 Jugadores</span>
+            </div>
+            <p class="portal-game-desc">
+              Juego de cartas táctico: 3 cartas boca abajo, 3 boca arriba y mano. Quema montones con el 10 o 4 iguales, y juega contra amigos o bots de IA.
+            </p>
+            <div class="portal-game-tags">
+              <span class="game-tag">🤖 Solo vs 3 IA</span>
+              <span class="game-tag">⚔️ 2-4 Amigos</span>
+              <span class="game-tag">🔥 Quema de Montón</span>
+            </div>
+          </div>
+          <span style="font-size: 20px; color: var(--accent-amber);">➡️</span>
+        </div>
+
+        <!-- Coming Soon Teaser -->
+        <div class="portal-game-card" style="opacity: 0.6; cursor: default; border-style: dashed;">
+          <div class="portal-game-icon" style="font-size: 34px;">
+            🔮
+          </div>
+          <div class="portal-game-info">
+            <div class="portal-game-title" style="color: var(--text-dim);">
+              <span>MÁS JUEGOS PRÓXIMAMENTE</span>
+            </div>
+            <p class="portal-game-desc">
+              Conecta 4, Batalla Naval, Trivia y más juegos multijugador se agregarán pronto a la plataforma.
+            </p>
           </div>
         </div>
 
-        <div class="input-group">
-          <label class="input-label">Nivel de Dificultad</label>
-          <div class="difficulty-grid">
-            <div class="diff-card diff-experto selected" data-diff="EXPERTO">
-              <span class="diff-name" style="color: var(--accent-cyan);">EXPERTO</span>
-              <span class="diff-tag">Técnicas avanzadas</span>
-            </div>
-            <div class="diff-card diff-extremo" data-diff="EXTREMO">
-              <span class="diff-name" style="color: var(--accent-amber);">EXTREMO</span>
-              <span class="diff-tag">Peces y Alas</span>
-            </div>
-            <div class="diff-card diff-imposible" data-diff="IMPOSIBLE">
-              <span class="diff-name" style="color: var(--accent-purple);">IMPOSIBLE</span>
-              <span class="diff-tag">17-22 pistas y cadenas</span>
-            </div>
-          </div>
-        </div>
-
-        <!-- Solo Quickplay -->
-        <button id="btn-solo-play" class="btn btn-emerald">
-          <span>🎯</span> JUGAR EN SOLITARIO
-        </button>
-
-        <div class="divider">O MULTIJUGADOR ONLINE</div>
-
-        <!-- Create Room -->
-        <button id="btn-create-room" class="btn btn-primary">
-          <span id="btn-create-icon">🤝</span> <span id="btn-create-text">CREAR SALA EN PAREJA</span>
-        </button>
-
-        <!-- Join Room -->
-        <div class="input-group">
-          <label class="input-label" for="input-join-code">Unirse con Código de Sala</label>
-          <div class="btn-group">
-            <input type="text" id="input-join-code" class="text-input code-input" placeholder="X7K92P" maxlength="6" style="flex: 1.2;">
-            <button id="btn-join-room" class="btn" style="flex: 1;">
-              <span>🚀</span> UNIRSE
-            </button>
-          </div>
-        </div>
       </div>
 
     </section>
 
     <!-- =========================================================================
-         VIEW 2: WAITING ROOM LOBBY
+         CONTAINER: JUEGO 1 - SUDOKU MULTIJUGADOR
          ========================================================================= -->
-    <section id="view-waiting" class="view-section">
+    <div id="sudoku-app-container" style="display: none; flex-direction: column; gap: 16px; width: 100%;">
       
-      <div class="glass-card">
-        <div style="display: flex; justify-content: space-between; align-items: center;">
-          <h2 class="card-title"><span>👥</span> Sala de Espera</h2>
-          <div style="display: flex; gap: 6px; align-items: center;">
-            <span id="waiting-mode-badge" class="difficulty-badge" style="background: rgba(16, 185, 129, 0.2); color: var(--accent-emerald); border: 1px solid var(--accent-emerald);">🤝 COOP</span>
-            <span id="waiting-diff-badge" class="difficulty-badge diff-EXPERTO">EXPERTO</span>
+      <!-- VIEW 1: SUDOKU LOBBY & MENU -->
+      <section id="view-lobby" class="view-section active">
+        
+        <div class="glass-card">
+          <div class="input-group">
+            <label class="input-label" for="input-nickname">Tu Nombre de Jugador</label>
+            <input type="text" id="input-nickname" class="text-input" placeholder="Tu Apodo..." maxlength="20">
+          </div>
+
+          <div class="input-group">
+            <label class="input-label">Modo Multijugador</label>
+            <div class="game-mode-grid">
+              <div class="mode-card mode-coop selected" data-mode="COOP">
+                <span class="mode-name">🤝 En Pareja</span>
+                <span class="mode-desc">Tablero compartido en vivo (3 errores en equipo)</span>
+              </div>
+              <div class="mode-card mode-versus" data-mode="VERSUS">
+                <span class="mode-name">⚔️ Duelo</span>
+                <span class="mode-desc">Tableros individuales (Carrera contra el rival)</span>
+              </div>
+            </div>
+          </div>
+
+          <div class="input-group">
+            <label class="input-label">Nivel de Dificultad</label>
+            <div class="difficulty-grid">
+              <div class="diff-card diff-experto selected" data-diff="EXPERTO">
+                <span class="diff-name" style="color: var(--accent-cyan);">EXPERTO</span>
+                <span class="diff-tag">Técnicas avanzadas</span>
+              </div>
+              <div class="diff-card diff-extremo" data-diff="EXTREMO">
+                <span class="diff-name" style="color: var(--accent-amber);">EXTREMO</span>
+                <span class="diff-tag">Peces y Alas</span>
+              </div>
+              <div class="diff-card diff-imposible" data-diff="IMPOSIBLE">
+                <span class="diff-name" style="color: var(--accent-purple);">IMPOSIBLE</span>
+                <span class="diff-tag">17-22 pistas y cadenas</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Solo Quickplay -->
+          <button id="btn-solo-play" class="btn btn-emerald">
+            <span>🎯</span> JUGAR EN SOLITARIO
+          </button>
+
+          <div class="divider">O MULTIJUGADOR ONLINE</div>
+
+          <!-- Create Room -->
+          <button id="btn-create-room" class="btn btn-primary">
+            <span id="btn-create-icon">🤝</span> <span id="btn-create-text">CREAR SALA EN PAREJA</span>
+          </button>
+
+          <!-- Join Room -->
+          <div class="input-group">
+            <label class="input-label" for="input-join-code">Unirse con Código de Sala</label>
+            <div class="btn-group">
+              <input type="text" id="input-join-code" class="text-input code-input" placeholder="X7K92P" maxlength="6" style="flex: 1.2;">
+              <button id="btn-join-room" class="btn" style="flex: 1;">
+                <span>🚀</span> UNIRSE
+              </button>
+            </div>
           </div>
         </div>
 
-        <div class="room-code-display">
-          <span class="room-code-label">Código de Invitación</span>
-          <span id="display-room-code" class="room-code-text">------</span>
-          <div class="btn-group" style="width: 100%; margin-top: 8px;">
-            <button id="btn-copy-code" class="btn" style="font-size: 13px; padding: 8px 12px;">
-              <span>📋</span> Copiar Código
+      </section>
+
+      <!-- VIEW 2: SUDOKU WAITING ROOM LOBBY -->
+      <section id="view-waiting" class="view-section">
+        
+        <div class="glass-card">
+          <div style="display: flex; justify-content: space-between; align-items: center;">
+            <h2 class="card-title"><span>👥</span> Sala de Espera</h2>
+            <div style="display: flex; gap: 6px; align-items: center;">
+              <span id="waiting-mode-badge" class="difficulty-badge" style="background: rgba(16, 185, 129, 0.2); color: var(--accent-emerald); border: 1px solid var(--accent-emerald);">🤝 COOP</span>
+              <span id="waiting-diff-badge" class="difficulty-badge diff-EXPERTO">EXPERTO</span>
+            </div>
+          </div>
+
+          <div class="room-code-display">
+            <span class="room-code-label">Código de Invitación</span>
+            <span id="display-room-code" class="room-code-text">------</span>
+            <div class="btn-group" style="width: 100%; margin-top: 8px;">
+              <button id="btn-copy-code" class="btn" style="font-size: 13px; padding: 8px 12px;">
+                <span>📋</span> Copiar Código
+              </button>
+              <button id="btn-share-room" class="btn" style="font-size: 13px; padding: 8px 12px;">
+                <span>🔗</span> Compartir Enlace
+              </button>
+            </div>
+          </div>
+
+          <!-- Players Slot -->
+          <div class="players-lobby-grid">
+            <div class="player-slot-card ready">
+              <div class="player-avatar">👑</div>
+              <div id="slot-host-name" class="player-slot-name">Anfitrión</div>
+              <span class="player-badge badge-host">Creador</span>
+            </div>
+
+            <div id="slot-guest-card" class="player-slot-card">
+              <div class="player-avatar">🎮</div>
+              <div id="slot-guest-name" class="player-slot-name">Esperando pareja / jugador...</div>
+              <span class="player-badge badge-waiting">Pareja</span>
+            </div>
+          </div>
+
+          <button id="btn-start-multiplayer" class="btn btn-primary" style="display: none;">
+            <span>⚔️</span> COMENZAR PARTIDA
+          </button>
+
+          <button id="btn-leave-waiting" class="btn btn-danger">
+            <span>🚪</span> Abandonar Sala
+          </button>
+        </div>
+
+      </section>
+
+      <!-- VIEW 3: SUDOKU GAME ARENA -->
+      <section id="view-game" class="view-section">
+        
+        <!-- Game HUD -->
+        <div class="game-hud">
+          <div class="hud-top-bar">
+            <div style="display: flex; gap: 6px; align-items: center;">
+              <span id="game-diff-badge" class="difficulty-badge diff-EXPERTO">EXPERTO</span>
+              <span id="game-mode-badge" class="difficulty-badge" style="background: rgba(16, 185, 129, 0.2); color: var(--accent-emerald); border: 1px solid var(--accent-emerald);">🤝 COOP</span>
+            </div>
+
+            <div class="timer-box">
+              <span class="timer-icon">⏱️</span>
+              <span id="game-timer">00:00</span>
+            </div>
+
+            <div id="hud-errors-box" class="errors-hud-box">
+              <span>❌</span>
+              <span id="hud-errors-count">0 / 3</span>
+            </div>
+          </div>
+
+          <!-- Duel Progress Bars -->
+          <div class="duel-bars-container">
+            <div class="player-progress-item">
+              <div class="progress-header">
+                <span class="player-tag-name">
+                  <span class="status-dot online"></span>
+                  <span id="my-name-tag">Tú</span>
+                </span>
+                <span id="my-progress-text" style="font-weight: 700; color: var(--primary);">0% (0/55)</span>
+              </div>
+              <div class="progress-track">
+                <div id="my-progress-fill" class="progress-fill fill-player" style="width: 0%;"></div>
+              </div>
+            </div>
+
+            <div id="opponent-progress-container" class="player-progress-item" style="display: none;">
+              <div class="progress-header">
+                <span class="player-tag-name">
+                  <span id="opponent-status-dot" class="status-dot online"></span>
+                  <span id="opponent-name-tag">Rival</span>
+                </span>
+                <span id="opponent-progress-text" style="font-weight: 700; color: var(--accent-purple);">0% (0/55)</span>
+              </div>
+              <div class="progress-track">
+                <div id="opponent-progress-fill" class="progress-fill fill-opponent" style="width: 0%;"></div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Sudoku Board -->
+        <div class="board-wrapper">
+          <div id="sudoku-grid" class="sudoku-grid"></div>
+        </div>
+
+        <!-- Controls & Virtual Keypad -->
+        <div class="controls-container">
+          <div class="action-bar">
+            <button id="btn-undo" class="action-btn" title="Deshacer (Ctrl+Z)">
+              <span class="action-icon">↩️</span>
+              <span>Deshacer</span>
             </button>
-            <button id="btn-share-room" class="btn" style="font-size: 13px; padding: 8px 12px;">
-              <span>🔗</span> Compartir Enlace
+            <button id="btn-redo" class="action-btn" title="Rehacer (Ctrl+Y)">
+              <span class="action-icon">↪️</span>
+              <span>Rehacer</span>
+            </button>
+            <button id="btn-erase" class="action-btn" title="Borrar (Retroceso/Delete)">
+              <span class="action-icon">🧹</span>
+              <span>Borrar</span>
+            </button>
+            <button id="btn-pencil" class="action-btn" title="Modo Notas / Candidatos (Espacio)">
+              <span class="action-icon">✏️</span>
+              <span>Notas</span>
             </button>
           </div>
-        </div>
 
-        <!-- Players Slot -->
-        <div class="players-lobby-grid">
-          <div class="player-slot-card ready">
-            <div class="player-avatar">👑</div>
-            <div id="slot-host-name" class="player-slot-name">Anfitrión</div>
-            <span class="player-badge badge-host">Creador</span>
+          <div class="numpad-grid">
+            <button class="num-btn" data-num="1">1</button>
+            <button class="num-btn" data-num="2">2</button>
+            <button class="num-btn" data-num="3">3</button>
+            <button class="num-btn" data-num="4">4</button>
+            <button class="num-btn" data-num="5">5</button>
+            <button class="num-btn" data-num="6">6</button>
+            <button class="num-btn" data-num="7">7</button>
+            <button class="num-btn" data-num="8">8</button>
+            <button class="num-btn" data-num="9">9</button>
           </div>
 
-          <div id="slot-guest-card" class="player-slot-card">
-            <div class="player-avatar">🎮</div>
-            <div id="slot-guest-name" class="player-slot-name">Esperando pareja / jugador...</div>
-            <span class="player-badge badge-waiting">Pareja</span>
-          </div>
+          <button id="btn-abandon-game" class="btn btn-danger" style="margin-top: 4px; padding: 10px;">
+            Salir de la partida
+          </button>
         </div>
 
-        <button id="btn-start-multiplayer" class="btn btn-primary" style="display: none;">
-          <span>⚔️</span> COMENZAR PARTIDA
-        </button>
+      </section>
 
-        <button id="btn-leave-waiting" class="btn btn-danger">
-          <span>🚪</span> Abandonar Sala
-        </button>
-      </div>
-
-    </section>
+    </div>
 
     <!-- =========================================================================
-         VIEW 3: GAME ARENA
+         CONTAINER: JUEGO 2 - STOP MULTIJUGADOR ONLINE
          ========================================================================= -->
-    <section id="view-game" class="view-section">
+    <div id="stop-app-container" style="display: none; flex-direction: column; gap: 16px; width: 100%;">
       
-      <!-- Game HUD -->
-      <div class="game-hud">
-        <div class="hud-top-bar">
-          <div style="display: flex; gap: 6px; align-items: center;">
-            <span id="game-diff-badge" class="difficulty-badge diff-EXPERTO">EXPERTO</span>
-            <span id="game-mode-badge" class="difficulty-badge" style="background: rgba(16, 185, 129, 0.2); color: var(--accent-emerald); border: 1px solid var(--accent-emerald);">🤝 COOP</span>
+      <!-- STOP VIEW 1: LOBBY & MENU -->
+      <section id="stop-view-lobby" class="view-section active">
+        
+        <div class="glass-card">
+          <div style="display: flex; align-items: center; gap: 10px;">
+            <span style="font-size: 28px;">🛑</span>
+            <h2 class="card-title" style="margin: 0;">STOP - Tutti Frutti Online</h2>
           </div>
 
-          <div class="timer-box">
-            <span class="timer-icon">⏱️</span>
-            <span id="game-timer">00:00</span>
+          <div class="input-group">
+            <label class="input-label" for="stop-nickname-input">Tu Nombre de Jugador</label>
+            <input type="text" id="stop-nickname-input" class="text-input" placeholder="Tu Apodo..." maxlength="20">
           </div>
 
-          <div id="hud-errors-box" class="errors-hud-box">
-            <span>❌</span>
-            <span id="hud-errors-count">0 / 3</span>
+          <div class="input-group">
+            <label class="input-label">Sistema de Puntuación</label>
+            <div class="game-mode-grid">
+              <div class="mode-card stop-scoring-option selected" data-scoring="standard">
+                <span class="mode-name">🌟 Estándar</span>
+                <span class="mode-desc">100 única / 50 repetida x2 / 25 repetida x3+ / 0 vacía</span>
+              </div>
+              <div class="mode-card stop-scoring-option" data-scoring="custom">
+                <span class="mode-name">👑 Ajustable</span>
+                <span class="mode-desc">El Capitán evalúa libremente cada respuesta</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Create Stop Room -->
+          <button id="stop-btn-create-room" class="btn btn-primary" style="background: linear-gradient(135deg, #f43f5e, #be123c);">
+            <span>🛑</span> CREAR SALA DE STOP (CAPITÁN)
+          </button>
+
+          <div class="divider">O UNIRSE A UNA SALA</div>
+
+          <!-- Join Stop Room -->
+          <div class="input-group">
+            <label class="input-label" for="stop-input-join-code">Código de Sala de STOP</label>
+            <div class="btn-group">
+              <input type="text" id="stop-input-join-code" class="text-input code-input" placeholder="X7K92" maxlength="6" style="flex: 1.2;">
+              <button id="stop-btn-join-room" class="btn" style="flex: 1;">
+                <span>🚀</span> ENTRAR
+              </button>
+            </div>
           </div>
         </div>
 
-        <!-- Duel Progress Bars -->
-        <div class="duel-bars-container">
-          <!-- Player Progress -->
-          <div class="player-progress-item">
-            <div class="progress-header">
-              <span class="player-tag-name">
-                <span class="status-dot online"></span>
-                <span id="my-name-tag">Tú</span>
+      </section>
+
+      <!-- STOP VIEW 2: WAITING ROOM LOBBY -->
+      <section id="stop-view-waiting" class="view-section">
+        
+        <div class="glass-card">
+          <div style="display: flex; justify-content: space-between; align-items: center;">
+            <h2 class="card-title"><span>🛑</span> Salón STOP</h2>
+            <span id="stop-waiting-players-count" class="difficulty-badge" style="background: rgba(244, 63, 94, 0.2); color: var(--accent-rose); border: 1px solid var(--accent-rose);">
+              1 jugador
+            </span>
+          </div>
+
+          <div class="room-code-display" style="border-color: var(--accent-rose);">
+            <span class="room-code-label" style="color: var(--accent-rose);">Código de la Sala</span>
+            <span id="stop-display-room-code" class="room-code-text" style="text-shadow: 0 0 15px var(--accent-rose-glow);">-----</span>
+            <div class="btn-group" style="width: 100%; margin-top: 8px;">
+              <button id="stop-btn-copy-code" class="btn" style="font-size: 13px; padding: 8px 12px;">
+                <span>📋</span> Copiar Código
+              </button>
+              <button id="stop-btn-share-room" class="btn" style="font-size: 13px; padding: 8px 12px;">
+                <span>🔗</span> Compartir Enlace
+              </button>
+            </div>
+          </div>
+
+          <!-- Connected Players List -->
+          <div class="input-group">
+            <label class="input-label">Jugadores Conectados en Tiempo Real</label>
+            <div id="stop-waiting-players-list" style="display: flex; flex-direction: column; gap: 8px; max-height: 220px; overflow-y: auto;">
+              <!-- Dynamic player list -->
+            </div>
+          </div>
+
+          <button id="stop-btn-captain-start" class="btn btn-primary" style="background: linear-gradient(135deg, #10b981, #059669); font-size: 16px; padding: 16px;">
+            <span>🏁</span> INICIAR PARTIDA (5 RONDAS)
+          </button>
+
+          <button id="stop-btn-leave-waiting" class="btn btn-danger">
+            <span>🚪</span> Salir de la Sala
+          </button>
+        </div>
+
+      </section>
+
+      <!-- STOP VIEW 3: GAMEPLAY ARENA -->
+      <section id="stop-view-game" class="view-section">
+        
+        <!-- Round & Giant Letter Header -->
+        <div class="glass-card" style="padding: 16px 20px; text-align: center; gap: 6px;">
+          <div style="display: flex; justify-content: space-between; align-items: center;">
+            <span id="stop-round-indicator" class="difficulty-badge" style="background: rgba(56, 189, 248, 0.2); color: var(--primary); border: 1px solid var(--primary);">
+              Ronda 1 de 5
+            </span>
+            <span class="difficulty-badge" style="background: rgba(245, 158, 11, 0.2); color: var(--accent-amber); border: 1px solid var(--accent-amber);">
+              Letra Oficial
+            </span>
+          </div>
+
+          <div style="font-size: 13px; color: var(--text-dim); text-transform: uppercase; font-weight: 700; margin-top: 4px;">
+            🔤 LETRA DE LA RONDA:
+          </div>
+
+          <div id="stop-letter-display" class="stop-letter-badge">
+            M
+          </div>
+        </div>
+
+        <!-- 5-Second Warning Banner -->
+        <div id="stop-warning-banner" class="stop-countdown-banner" style="display: none;">
+          <div>
+            <h3 style="font-size: 16px; font-weight: 900; color: #fff;">🛑 ¡ALGUIEN PRESIONÓ STOP!</h3>
+            <p id="stop-warning-text" style="font-size: 12px; color: var(--text-muted); margin-top: 2px;">
+              ¡Termina de escribir tus respuestas!
+            </p>
+          </div>
+          <div id="stop-countdown-number" class="stop-countdown-digit">5</div>
+        </div>
+
+        <!-- 7 Category Inputs -->
+        <div class="glass-card" style="padding: 18px 20px; gap: 12px;">
+          
+          <div class="input-group">
+            <label class="input-label" for="stop-input-nombre">1. Nombre</label>
+            <input type="text" id="stop-input-nombre" class="text-input" placeholder="Ej: María..." autocomplete="off">
+          </div>
+
+          <div class="input-group">
+            <label class="input-label" for="stop-input-apellido">2. Apellido</label>
+            <input type="text" id="stop-input-apellido" class="text-input" placeholder="Ej: Martínez..." autocomplete="off">
+          </div>
+
+          <div class="input-group">
+            <label class="input-label" for="stop-input-fruta">3. Fruta</label>
+            <input type="text" id="stop-input-fruta" class="text-input" placeholder="Ej: Mango..." autocomplete="off">
+          </div>
+
+          <div class="input-group">
+            <label class="input-label" for="stop-input-color">4. Color</label>
+            <input type="text" id="stop-input-color" class="text-input" placeholder="Ej: Morado..." autocomplete="off">
+          </div>
+
+          <div class="input-group">
+            <label class="input-label" for="stop-input-animal">5. Animal</label>
+            <input type="text" id="stop-input-animal" class="text-input" placeholder="Ej: Mono..." autocomplete="off">
+          </div>
+
+          <div class="input-group">
+            <label class="input-label" for="stop-input-artista">6. Artista</label>
+            <input type="text" id="stop-input-artista" class="text-input" placeholder="Ej: Maluma..." autocomplete="off">
+          </div>
+
+          <div class="input-group">
+            <label class="input-label" for="stop-input-pais">7. País</label>
+            <input type="text" id="stop-input-pais" class="text-input" placeholder="Ej: México..." autocomplete="off">
+          </div>
+
+          <!-- Giant STOP Button -->
+          <button id="stop-btn-stop" class="btn-stop-trigger" style="margin-top: 8px;">
+            <span>🛑</span> ¡STOP!
+          </button>
+
+          <button id="stop-btn-abandon-game" class="btn" style="border-color: transparent; color: var(--text-dim); font-size: 12px; padding: 6px;">
+            Salir de la partida
+          </button>
+        </div>
+
+      </section>
+
+      <!-- STOP VIEW 4: SCORING / EVALUACIÓN DEL CAPITÁN -->
+      <section id="stop-view-scoring" class="view-section">
+        
+        <div class="glass-card">
+          <div style="display: flex; justify-content: space-between; align-items: center;">
+            <h2 id="stop-scoring-round-title" class="card-title" style="margin: 0;">Evaluación Ronda 1</h2>
+            <span id="stop-scoring-letter-badge" class="difficulty-badge diff-EXPERTO">Letra: M</span>
+          </div>
+
+          <p id="stop-player-scoring-waiting" style="display: none; font-size: 13px; color: var(--accent-amber); background: rgba(245, 158, 11, 0.12); padding: 10px; border-radius: var(--radius-sm); text-align: center;">
+            ⏳ El Capitán está revisando y asignando los puntos de la ronda...
+          </p>
+
+          <!-- Grouped Answers by Category for Captain Comparison -->
+          <div id="stop-scoring-container" style="display: flex; flex-direction: column; gap: 12px;">
+            <!-- Category cards populated dynamically -->
+          </div>
+
+          <div id="stop-captain-scoring-actions" class="btn-group" style="display: none; margin-top: 10px;">
+            <button id="stop-btn-confirm-scores" class="btn btn-emerald" style="width: 100%; font-size: 15px; padding: 16px;">
+              <span>✅</span> CONFIRMAR PUNTUACIÓN DE LA RONDA
+            </button>
+          </div>
+        </div>
+
+      </section>
+
+      <!-- STOP VIEW 5: ROUND RESULTS -->
+      <section id="stop-view-round-results" class="view-section">
+        
+        <div class="glass-card">
+          <h2 id="stop-round-results-title" class="card-title" style="margin: 0;">Resultados de la Ronda</h2>
+
+          <div class="input-group">
+            <label class="input-label">Puntaje de esta Ronda</label>
+            <div id="stop-round-scores-table" style="background: var(--bg-surface); border-radius: var(--radius-md); padding: 10px 14px;">
+              <!-- Round scores populated dynamically -->
+            </div>
+          </div>
+
+          <p id="stop-waiting-next-round-notice" style="display: none; font-size: 13px; color: var(--text-muted); text-align: center;">
+            Esperando a que el Capitán inicie la siguiente ronda...
+          </p>
+
+          <button id="stop-btn-next-round" class="btn btn-primary" style="display: none; padding: 16px; font-size: 16px;">
+            Siguiente Ronda ➡️
+          </button>
+        </div>
+
+      </section>
+
+      <!-- STOP VIEW 6: FINAL RESULTS (5 RONDAS) -->
+      <section id="stop-view-final-results" class="view-section">
+        
+        <div class="glass-card" style="text-align: center;">
+          
+          <div id="stop-winner-podium" style="display: flex; flex-direction: column; align-items: center; gap: 8px; margin-bottom: 12px;">
+            <!-- Winner details -->
+          </div>
+
+          <div class="input-group" style="text-align: left;">
+            <label class="input-label">Tabla General de las 5 Rondas</label>
+            <div id="stop-final-scores-table" style="background: var(--bg-surface); border-radius: var(--radius-md); padding: 12px;">
+              <!-- Final 5-round table -->
+            </div>
+          </div>
+
+          <div class="btn-group" style="margin-top: 10px;">
+            <button id="stop-btn-play-again" class="btn btn-emerald" style="flex: 1.2;">
+              <span>🔄</span> JUGAR DE NUEVO
+            </button>
+            <button id="stop-btn-final-exit" class="btn" style="flex: 1;">
+              Salir al Menú
+            </button>
+          </div>
+        </div>
+
+      </section>
+
+    </div>
+
+    <!-- =========================================================================
+         CONTAINER: JUEGO 3 - GUERRA (JUEGO DE CARTAS 1-4 JUGADORES)
+         ========================================================================= -->
+    <div id="guerra-app-container" style="display: none; flex-direction: column; gap: 16px; width: 100%;">
+      
+      <!-- GUERRA VIEW 1: LOBBY & MENU -->
+      <section id="guerra-view-lobby" class="view-section active">
+        
+        <div class="glass-card">
+          <div style="display: flex; align-items: center; gap: 10px;">
+            <span style="font-size: 28px;">🃏</span>
+            <h2 class="card-title" style="margin: 0;">Guerra de Cartas</h2>
+          </div>
+
+          <div class="input-group">
+            <label class="input-label" for="guerra-nickname-input">Tu Nombre de Jugador</label>
+            <input type="text" id="guerra-nickname-input" class="text-input" placeholder="Tu Apodo..." maxlength="20">
+          </div>
+
+          <div class="input-group">
+            <label class="input-label">Información de la Partida</label>
+            <div class="game-mode-grid">
+              <div class="mode-card selected" style="cursor: default;">
+                <span class="mode-name">⚔️ 1 a 4 Jugadores</span>
+                <span class="mode-desc">1 jugador = Juega vs 3 bots de IA | 2-4 jugadores = Partida entre amigos</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Create Guerra Room -->
+          <button id="guerra-btn-create-room" class="btn btn-primary" style="background: linear-gradient(135deg, #f59e0b, #d97706); color: #000; font-weight: 800;">
+            <span>🃏</span> CREAR SALA DE GUERRA
+          </button>
+
+          <!-- Rules Button in Lobby -->
+          <button id="guerra-btn-view-rules" class="btn" style="background: rgba(245, 158, 11, 0.15); color: var(--accent-amber); border: 1px solid var(--accent-amber); font-size: 13px; padding: 10px; width: 100%;">
+            <span>📖</span> Reglas y Cómo Jugar
+          </button>
+
+          <div class="divider">O UNIRSE A UNA SALA</div>
+
+          <!-- Join Guerra Room -->
+          <div class="input-group">
+            <label class="input-label" for="guerra-input-join-code">Código de Sala de Guerra</label>
+            <div class="btn-group">
+              <input type="text" id="guerra-input-join-code" class="text-input code-input" placeholder="X7K92" maxlength="6" style="flex: 1.2;">
+              <button id="guerra-btn-join-room" class="btn" style="flex: 1;">
+                <span>🚀</span> ENTRAR
+              </button>
+            </div>
+          </div>
+        </div>
+
+      </section>
+
+      <!-- GUERRA VIEW 2: WAITING ROOM LOBBY -->
+      <section id="guerra-view-waiting" class="view-section">
+        
+        <div class="glass-card">
+          <div style="display: flex; justify-content: space-between; align-items: center;">
+            <h2 class="card-title"><span>🃏</span> Salón de Guerra</h2>
+            <span id="guerra-waiting-players-count" class="difficulty-badge" style="background: rgba(245, 158, 11, 0.2); color: var(--accent-amber); border: 1px solid var(--accent-amber);">
+              1 / 4 Jugadores
+            </span>
+          </div>
+
+          <div class="room-code-display" style="border-color: var(--accent-amber);">
+            <span class="room-code-label" style="color: var(--accent-amber);">Código de la Sala</span>
+            <span id="guerra-display-room-code" class="room-code-text" style="text-shadow: 0 0 15px var(--accent-amber-glow);">-----</span>
+            <div class="btn-group" style="width: 100%; margin-top: 8px;">
+              <button id="guerra-btn-copy-code" class="btn" style="font-size: 13px; padding: 8px 12px;">
+                <span>📋</span> Copiar Código
+              </button>
+              <button id="guerra-btn-share-room" class="btn" style="font-size: 13px; padding: 8px 12px;">
+                <span>🔗</span> Compartir Enlace
+              </button>
+            </div>
+          </div>
+
+          <!-- Connected Players List -->
+          <div class="input-group">
+            <label class="input-label">Jugadores Conectados (1 a 4)</label>
+            <div id="guerra-waiting-players-list" style="display: flex; flex-direction: column; gap: 8px; max-height: 220px; overflow-y: auto;">
+              <!-- Dynamic player list -->
+            </div>
+          </div>
+
+          <button id="guerra-btn-host-start" class="btn btn-primary" style="background: linear-gradient(135deg, #10b981, #059669); font-size: 16px; padding: 16px;">
+            <span>⚔️</span> INICIAR PARTIDA
+          </button>
+
+          <button id="guerra-btn-leave-waiting" class="btn btn-danger">
+            <span>🚪</span> Salir de la Sala
+          </button>
+        </div>
+
+      </section>
+
+      <!-- GUERRA DEALING ANIMATION OVERLAY -->
+      <div id="guerra-dealing-overlay" class="modal-overlay" style="display: none; z-index: 150;">
+        <div class="modal-card" style="max-width: 360px; text-align: center;">
+          <div class="spinner"></div>
+          <h3 id="guerra-dealing-text" class="modal-title" style="font-size: 18px; margin-top: 10px;">Repartiendo cartas...</h3>
+          <p class="modal-subtitle">Colocando 3 cartas ocultas y 6 visibles.</p>
+        </div>
+      </div>
+
+      <!-- GUERRA VIEW 3: SETUP SELECTION (CHOOSE 3 OF 6 FOR FACE-UP) -->
+      <section id="guerra-view-setup" class="view-section">
+        
+        <div class="glass-card" style="text-align: center;">
+          <h2 class="card-title" style="margin: 0;">Preparación: Elige 3 Cartas</h2>
+          <p style="font-size: 13px; color: var(--text-muted); margin: 4px 0 12px 0;">
+            Selecciona <b>exactamente 3 cartas</b> para colocarlas boca arriba sobre tus 3 cartas ocultas. Las 3 restantes quedarán en tu mano privada.
+          </p>
+
+          <div style="display: flex; justify-content: center; align-items: center; gap: 8px; margin-bottom: 8px;">
+            <span style="font-size: 13px; color: var(--text-dim);">Seleccionadas:</span>
+            <span id="guerra-setup-selected-count" class="difficulty-badge" style="background: var(--primary); color: #000; font-weight: 800;">
+              0 / 3
+            </span>
+          </div>
+
+          <!-- 6 Selectable Cards -->
+          <div id="guerra-setup-selectable-cards" class="setup-cards-grid">
+            <!-- 6 cards rendered here -->
+          </div>
+
+          <p id="guerra-setup-waiting-notice" style="display: none; font-size: 13px; color: var(--accent-amber); background: rgba(245, 158, 11, 0.12); padding: 10px; border-radius: var(--radius-sm);">
+            ⏳ Esperando a que todos los jugadores elijan sus 3 cartas...
+          </p>
+
+          <button id="guerra-btn-confirm-setup" class="btn btn-emerald" style="width: 100%; font-size: 16px; padding: 14px; margin-top: 10px;" disabled>
+            <span>✅</span> CONFIRMAR Y COLOCAR BOCA ARRIBA
+          </button>
+        </div>
+
+      </section>
+
+      <!-- GUERRA VIEW 4: SQUARE CASINO CARD TABLE -->
+      <section id="guerra-view-game" class="view-section">
+        
+        <div class="guerra-table-wrapper">
+          
+          <!-- Turn Notice & Deck Remaining Header -->
+          <div style="display: flex; justify-content: space-between; align-items: center; gap: 8px;">
+            <div id="guerra-turn-notice" class="guerra-turn-badge">
+              <span>⏱️</span> <span id="guerra-turn-player-name">Cargando turno...</span>
+            </div>
+            <div style="display: flex; align-items: center; gap: 6px;">
+              <span id="guerra-deck-count" class="difficulty-badge" style="background: rgba(148, 163, 184, 0.15); color: var(--text-main);">
+                52 cartas
               </span>
-              <span id="my-progress-text" style="font-weight: 700; color: var(--primary);">0% (0/55)</span>
-            </div>
-            <div class="progress-track">
-              <div id="my-progress-fill" class="progress-fill fill-player" style="width: 0%;"></div>
+              <button id="guerra-btn-game-rules" class="icon-btn" style="width: 32px; height: 32px; font-size: 14px; border-color: var(--accent-amber); color: var(--accent-amber);" title="Ver Reglas">📖</button>
             </div>
           </div>
 
-          <!-- Opponent Progress (Multiplayer) -->
-          <div id="opponent-progress-container" class="player-progress-item" style="display: none;">
-            <div class="progress-header">
-              <span class="player-tag-name">
-                <span id="opponent-status-dot" class="status-dot online"></span>
-                <span id="opponent-name-tag">Rival</span>
+          <!-- Active Special Rule Banner -->
+          <div id="guerra-rule-notice" style="display: none; font-size: 12px; font-weight: 800; color: var(--accent-amber); background: rgba(245, 158, 11, 0.15); border: 1px solid var(--accent-amber); padding: 6px 12px; border-radius: var(--radius-full); text-align: center;">
+            ⚡ REGLA ACTIVA: Debe ser 7 o menor (o un 2)
+          </div>
+
+          <!-- Action Notification Banner -->
+          <div id="guerra-action-notice" style="font-size: 12px; color: var(--text-muted); text-align: center; min-height: 16px; transition: opacity 0.3s; opacity: 0;"></div>
+
+          <!-- Real Square / Oval Card Table -->
+          <div class="guerra-square-table">
+            
+            <!-- SEAT: TOP (Norte / Frente) -->
+            <div class="table-seat-top">
+              <div id="guerra-seat-top" class="guerra-seat-box" style="display: none;"></div>
+            </div>
+
+            <!-- SEAT: LEFT (Oeste / Izquierda) -->
+            <div class="table-seat-left">
+              <div id="guerra-seat-left" class="guerra-seat-box" style="display: none;"></div>
+            </div>
+
+            <!-- CENTER POT & PILE -->
+            <div class="table-center-pot">
+              <div id="guerra-pile-burn-effect" class="pile-burn-overlay"></div>
+
+              <!-- Draw Deck Stack -->
+              <div class="center-pile-container">
+                <span style="font-size: 10px; color: var(--text-dim); text-transform: uppercase; font-weight: 700;">Mazo</span>
+                <div id="guerra-deck-stack" class="guerra-card card-back" style="box-shadow: 0 4px 10px rgba(0,0,0,0.6);">
+                  <div class="card-back-pattern">🂠</div>
+                </div>
+              </div>
+
+              <!-- Play Pile Stack -->
+              <div class="center-pile-container">
+                <div style="display: flex; align-items: center; gap: 4px;">
+                  <span style="font-size: 10px; color: var(--text-dim); text-transform: uppercase; font-weight: 700;">Montón</span>
+                  <span id="guerra-pile-count" class="card-count-badge" style="font-size: 9px; padding: 1px 5px;">0</span>
+                </div>
+                <div id="guerra-play-pile">
+                  <div class="guerra-card card-placeholder">
+                    <span style="font-size: 11px; color: var(--text-dim);">Vacío</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- SEAT: RIGHT (Este / Derecha) -->
+            <div class="table-seat-right">
+              <div id="guerra-seat-right" class="guerra-seat-box" style="display: none;"></div>
+            </div>
+
+          </div>
+
+          <!-- SEAT: BOTTOM (Sur / TU POSICION AL FRENTE) -->
+          <div id="guerra-seat-bottom" class="guerra-player-area glass-card" style="padding: 12px; gap: 8px;">
+            
+            <div style="display: flex; justify-content: space-between; align-items: center;">
+              <span style="font-size: 12px; font-weight: 800; color: var(--accent-cyan); text-transform: uppercase;">
+                Tus Cartas en Mesa (Boca Abajo / Arriba)
               </span>
-              <span id="opponent-progress-text" style="font-weight: 700; color: var(--accent-purple);">0% (0/55)</span>
+              <button id="guerra-btn-pickup-pile" class="btn" style="padding: 4px 10px; font-size: 12px; background: rgba(239, 68, 68, 0.15); color: var(--accent-rose); border-color: var(--accent-rose);" disabled>
+                📥 Recoger Montón
+              </button>
             </div>
-            <div class="progress-track">
-              <div id="opponent-progress-fill" class="progress-fill fill-opponent" style="width: 0%;"></div>
+
+            <!-- My 3 Table Slots -->
+            <div id="guerra-my-table-cards" class="my-table-cards-row">
+              <!-- 3 slots rendered here -->
+            </div>
+
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-top: 4px;">
+              <span style="font-size: 12px; font-weight: 800; color: var(--accent-cyan); text-transform: uppercase;">
+                Tu Mano Privada
+              </span>
+              <button id="guerra-btn-play-selected" class="btn btn-emerald" style="padding: 6px 14px; font-size: 13px;" disabled>
+                <span>⚔️</span> Jugar Carta(s)
+              </button>
+            </div>
+
+            <!-- My Hand Cards (Scrollable horizontal) -->
+            <div id="guerra-my-hand-cards" class="my-hand-cards-scroll">
+              <!-- Hand cards rendered here -->
+            </div>
+
+            <button id="guerra-btn-abandon-game" class="btn" style="border-color: transparent; color: var(--text-dim); font-size: 11px; padding: 4px; margin-top: -4px;">
+              Salir de la partida
+            </button>
+          </div>
+
+        </div>
+
+      </section>
+
+      <!-- GUERRA VIEW 5: RESULTS & PODIUM -->
+      <section id="guerra-view-results" class="view-section">
+        
+        <div class="glass-card" style="text-align: center;">
+          <div id="guerra-podium-container" style="display: flex; flex-direction: column; align-items: center; gap: 6px; margin-bottom: 12px;">
+            <!-- Champion trophy -->
+          </div>
+
+          <div class="input-group" style="text-align: left;">
+            <label class="input-label">Clasificación Final de la Partida</label>
+            <div style="background: var(--bg-surface); border-radius: var(--radius-md); padding: 10px 14px;">
+              <table style="width: 100%; border-collapse: collapse; font-size: 14px;">
+                <thead>
+                  <tr style="color: var(--text-dim); text-align: left; border-bottom: 1px solid var(--border-color);">
+                    <th style="padding: 8px 4px;">Puesto</th>
+                    <th style="padding: 8px 4px;">Jugador</th>
+                  </tr>
+                </thead>
+                <tbody id="guerra-results-table-body">
+                  <!-- Rankings rendered dynamically -->
+                </tbody>
+              </table>
             </div>
           </div>
-        </div>
-      </div>
 
-      <!-- Sudoku Board -->
-      <div class="board-wrapper">
-        <div id="sudoku-grid" class="sudoku-grid">
-          <!-- 81 cells dynamically generated -->
-        </div>
-      </div>
-
-      <!-- Controls & Virtual Keypad -->
-      <div class="controls-container">
-        <!-- Action Row -->
-        <div class="action-bar">
-          <button id="btn-undo" class="action-btn" title="Deshacer (Ctrl+Z)">
-            <span class="action-icon">↩️</span>
-            <span>Deshacer</span>
-          </button>
-          <button id="btn-redo" class="action-btn" title="Rehacer (Ctrl+Y)">
-            <span class="action-icon">↪️</span>
-            <span>Rehacer</span>
-          </button>
-          <button id="btn-erase" class="action-btn" title="Borrar (Retroceso/Delete)">
-            <span class="action-icon">🧹</span>
-            <span>Borrar</span>
-          </button>
-          <button id="btn-pencil" class="action-btn" title="Modo Notas / Candidatos (Espacio)">
-            <span class="action-icon">✏️</span>
-            <span>Notas</span>
-          </button>
+          <div class="btn-group" style="margin-top: 12px;">
+            <button id="guerra-btn-play-again" class="btn btn-emerald" style="flex: 1.2;">
+              <span>🔄</span> JUGAR OTRA VEZ
+            </button>
+            <button id="guerra-btn-return-menu" class="btn" style="flex: 1;">
+              Volver al Menú
+            </button>
+          </div>
         </div>
 
-        <!-- 1-9 Digits Keypad -->
-        <div class="numpad-grid">
-          <button class="num-btn" data-num="1">1</button>
-          <button class="num-btn" data-num="2">2</button>
-          <button class="num-btn" data-num="3">3</button>
-          <button class="num-btn" data-num="4">4</button>
-          <button class="num-btn" data-num="5">5</button>
-          <button class="num-btn" data-num="6">6</button>
-          <button class="num-btn" data-num="7">7</button>
-          <button class="num-btn" data-num="8">8</button>
-          <button class="num-btn" data-num="9">9</button>
-        </div>
+      </section>
 
-        <button id="btn-abandon-game" class="btn btn-danger" style="margin-top: 4px; padding: 10px;">
-          Salir al Menú
-        </button>
-      </div>
-
-    </section>
+    </div>
 
   </div>
 
   <!-- =========================================================================
-       MODAL: GAME OVER / VICTORY
+       SHARED MODALS & OVERLAYS
        ========================================================================= -->
+
+  <!-- SUDOKU GAME OVER MODAL -->
   <div id="modal-game-over" class="modal-overlay">
     <div class="modal-card">
       <div id="game-over-icon" class="modal-icon">🏆</div>
@@ -308,15 +973,13 @@
     </div>
   </div>
 
-  <!-- =========================================================================
-       MODAL: LOADING GENERATOR
-       ========================================================================= -->
+  <!-- LOADING OVERLAY -->
   <div id="modal-loading" class="modal-overlay">
     <div class="modal-card" style="max-width: 360px;">
       <div class="loading-box">
         <div class="spinner"></div>
-        <h3 id="loading-text" class="modal-title" style="font-size: 18px;">Generando Sudoku...</h3>
-        <p class="modal-subtitle">Buscando solución única con análisis lógico.</p>
+        <h3 id="loading-text" class="modal-title" style="font-size: 18px;">Cargando...</h3>
+        <p class="modal-subtitle">Sincronizando con el servidor.</p>
         <div class="progress-track" style="width: 100%; height: 6px; margin-top: 8px;">
           <div id="loading-progress-bar" class="progress-fill fill-player" style="width: 15%;"></div>
         </div>
@@ -324,13 +987,176 @@
     </div>
   </div>
 
-  <!-- =========================================================================
-       MODAL: SETTINGS & FIREBASE CONFIG
-       ========================================================================= -->
+  <!-- RULES & HOW TO PLAY MODAL -->
+  <div id="modal-game-rules" class="modal-overlay">
+    <div class="modal-card rules-modal-card">
+      
+      <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+        <h2 class="modal-title" style="margin: 0; display: flex; align-items: center; gap: 8px;">
+          <span>📖</span> Reglas y Cómo Jugar
+        </h2>
+        <button id="btn-close-rules" class="icon-btn" style="width: 32px; height: 32px; font-size: 14px;">✕</button>
+      </div>
+
+      <!-- Navigation Tabs -->
+      <div class="rules-tabs-bar">
+        <button class="rules-tab-btn active" data-rules-tab="guerra">🃏 Guerra</button>
+        <button class="rules-tab-btn" data-rules-tab="sudoku">🧩 Sudoku</button>
+        <button class="rules-tab-btn" data-rules-tab="stop">🛑 STOP</button>
+      </div>
+
+      <!-- TAB 1: GUERRA RULES -->
+      <div id="rules-tab-content-guerra" class="rules-content-scroll">
+        
+        <div class="rule-card">
+          <div class="rule-card-title">
+            <span>🏆</span> Objetivo del Juego
+          </div>
+          <div class="rule-card-desc">
+            Sé el <b>primer jugador en quedarse sin ninguna carta</b> (sin cartas en mano, sin cartas boca arriba y sin cartas boca abajo).
+          </div>
+        </div>
+
+        <div class="rule-card">
+          <div class="rule-card-title">
+            <span>🎴</span> Jerarquía y Jugadas
+          </div>
+          <div class="rule-card-desc">
+            <b>3 < 4 < 5 < 6 < 7 < 8 < 9 < 10 < J < Q < K < A</b><br>
+            • Debes colocar una carta de <b>igual o mayor valor</b> a la que está en la cima del montón.<br>
+            • Puedes tirar <b>varias cartas del mismo número</b> en una sola jugada (ej: dos 8s, tres Reyes).
+          </div>
+        </div>
+
+        <div class="rule-card">
+          <div class="rule-card-title">
+            <span>⭐</span> Cartas Especiales y Quemas
+          </div>
+          <div class="rule-special-grid">
+            <div class="rule-special-item">
+              <span style="font-weight: 800; color: var(--accent-amber);">🃏 Carta 2 (Reinicio)</span>
+              <span style="font-size: 12px; color: var(--text-muted);">Se puede tirar sobre cualquier carta. Reinicia el montón a cero (la siguiente carta puede ser cualquiera).</span>
+            </div>
+            <div class="rule-special-item">
+              <span style="font-weight: 800; color: var(--accent-amber);">⚡ Carta 7 (Menor o Igual)</span>
+              <span style="font-size: 12px; color: var(--text-muted);">Obliga al siguiente jugador a tirar una carta de valor <b>7 o menor</b> (o un 2).</span>
+            </div>
+            <div class="rule-special-item">
+              <span style="font-weight: 800; color: var(--accent-rose);">💥 Carta 10 (Quema)</span>
+              <span style="font-size: 12px; color: var(--text-muted);">Quema y elimina todo el montón central inmediatamente y te da un <b>turno extra</b>.</span>
+            </div>
+            <div class="rule-special-item">
+              <span style="font-weight: 800; color: var(--accent-rose);">🔥 4 Iguales Consecutivas</span>
+              <span style="font-size: 12px; color: var(--text-muted);">Si se juntan 4 cartas del mismo número en el montón, se quema y da turno extra.</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="rule-card">
+          <div class="rule-card-title">
+            <span>📥</span> Recoger el Montón
+          </div>
+          <div class="rule-card-desc">
+            Si en tu turno no tienes ninguna carta válida para colocar sobre el montón, debes presionar <b>"Recoger Montón"</b> y añadir todas las cartas de la mesa a tu mano privada.
+          </div>
+        </div>
+
+        <div class="rule-card">
+          <div class="rule-card-title">
+            <span>🔄</span> Las 3 Fases del Juego
+          </div>
+          <div class="rule-card-desc">
+            <b>1. Mano Privada & Mazo:</b> Juegas desde tu mano y robas del mazo hasta tener siempre al menos 3 cartas.<br>
+            <b>2. Cartas Boca Arriba:</b> Cuando se agota el mazo y te quedas sin cartas en mano, juegas desde tus 3 cartas boca arriba.<br>
+            <b>3. Cartas Boca Abajo (A Ciegas):</b> Cuando no te quedan cartas boca arriba, volteas una de tus cartas ocultas. Si es válida la juegas; si no, ¡recoges todo el montón!
+          </div>
+        </div>
+
+      </div>
+
+      <!-- TAB 2: SUDOKU RULES -->
+      <div id="rules-tab-content-sudoku" class="rules-content-scroll" style="display: none;">
+        
+        <div class="rule-card">
+          <div class="rule-card-title">
+            <span>🧩</span> Objetivo del Sudoku
+          </div>
+          <div class="rule-card-desc">
+            Llena la cuadrícula de 9x9 con los números del 1 al 9, sin repetir ningún número en la misma fila, columna o caja de 3x3.
+          </div>
+        </div>
+
+        <div class="rule-card">
+          <div class="rule-card-title">
+            <span>🤝</span> Modos de Juego
+          </div>
+          <div class="rule-card-desc">
+            • <b>En Pareja (Cooperativo):</b> Dos jugadores resuelven el <b>mismo tablero en tiempo real</b> compartiendo 3 vidas de equipo.<br>
+            • <b>Duelo (Versus):</b> Compiten en tableros independientes por terminar primero.<br>
+            • <b>Solitario:</b> Para practicar y mejorar tu lógica.
+          </div>
+        </div>
+
+        <div class="rule-card">
+          <div class="rule-card-title">
+            <span>❤️</span> 3 Vidas y Errores
+          </div>
+          <div class="rule-card-desc">
+            Cada casilla admite únicamente el número correcto matemáticamente. Si colocas un número incorrecto, se marcará un error. Al acumular <b>3 errores se pierde la partida</b>.
+          </div>
+        </div>
+
+      </div>
+
+      <!-- TAB 3: STOP RULES -->
+      <div id="rules-tab-content-stop" class="rules-content-scroll" style="display: none;">
+        
+        <div class="rule-card">
+          <div class="rule-card-title">
+            <span>🛑</span> Objetivo de STOP
+          </div>
+          <div class="rule-card-desc">
+            Escribe palabras que comiencen con la <b>letra de la ronda</b> para cada una de las 7 categorías (Nombre, Apellido, Fruta, Color, Animal, Artista, País).
+          </div>
+        </div>
+
+        <div class="rule-card">
+          <div class="rule-card-title">
+            <span>⏱️</span> Botón STOP y Cuenta Regresiva
+          </div>
+          <div class="rule-card-desc">
+            El primer jugador en completar sus campos presiona <b>¡STOP!</b>. Se iniciará una cuenta regresiva de 5 segundos para todos los demás jugadores antes de bloquear las respuestas.
+          </div>
+        </div>
+
+        <div class="rule-card">
+          <div class="rule-card-title">
+            <span>👑</span> Rol del Capitán y Puntos
+          </div>
+          <div class="rule-card-desc">
+            El Capitán califica las respuestas de cada categoría:<br>
+            • <b>100 pts:</b> Respuesta válida y única.<br>
+            • <b>50 pts:</b> Respuesta repetida por otro jugador.<br>
+            • <b>0 pts:</b> Respuesta incorrecta o vacía.
+          </div>
+        </div>
+
+      </div>
+
+      <div style="margin-top: 10px;">
+        <button id="btn-rules-ok" class="btn btn-primary" style="width: 100%;">
+          ¡Entendido!
+        </button>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- FIREBASE CONFIG MODAL -->
   <div id="modal-settings" class="modal-overlay">
     <div class="modal-card">
       <h2 class="modal-title"><span>⚙️</span> Configurar Firebase</h2>
-      <p class="modal-subtitle">Configura tus credenciales de Firebase para habilitar el multijugador online en GitHub Pages.</p>
+      <p class="modal-subtitle">Configura tus credenciales de Firebase para habilitar el multijugador online.</p>
 
       <div style="display: flex; flex-direction: column; gap: 12px; text-align: left;">
         <div class="input-group">
@@ -360,13 +1186,16 @@
     </div>
   </div>
 
-  <!-- Toast Notification Area -->
+  <!-- Toast Container -->
   <div id="toast-container" class="toast-container"></div>
 
-  <!-- Application Logic Scripts -->
+  <!-- Platform & Game Scripts -->
   <script src="firebase-config.js"></script>
   <script src="sudoku.js"></script>
   <script src="multiplayer.js"></script>
   <script src="app.js"></script>
+  <script src="stop-game.js"></script>
+  <script src="guerra-game.js"></script>
+  <script src="platform.js"></script>
 </body>
 </html>

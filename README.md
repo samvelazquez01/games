@@ -1,38 +1,51 @@
-# Sudoku Multijugador Online en Tiempo Real ⚡
+# GAMES ONLINE - Plataforma de Juegos Multijugador en Tiempo Real 🎮
 
-Web moderna, profesional y ultra-rápida de **Sudoku Multijugador en Tiempo Real** construida con JavaScript Vanilla, CSS3 moderno y **Firebase Realtime Database**, optimizada para desplegarse directamente en **GitHub Pages**.
+Plataforma web modular, rápida y responsive de **juegos multijugador online en tiempo real** construida con **JavaScript Vanilla**, **CSS3 moderno (Cyber Dark)** y **Firebase Realtime Database**, lista para desplegarse directamente en **GitHub Pages**.
 
 ---
 
-## 🚀 Características Principales
+## 🕹️ Juegos Disponibles
 
-1. **Niveles de Dificultad Real (Sin Fácil ni Medio)**:
-   - **EXPERTO**: Requiere técnicas lógicas avanzadas (*Pointing*, *Box-Line Reduction*, *Naked/Hidden Pairs*, *X-Wing*, *XY-Wing*).
-   - **EXTREMO**: Requiere técnicas de alta complejidad (*Swordfish*, *XYZ-Wing*, *W-Wing*, *Skyscraper*, *Two-String Kite*, *Simple Coloring*).
-   - **IMPOSIBLE**: Brutalmente exigente, requiriendo cadenas de inferencia profunda (*Jellyfish*, *Finned Fish*, *XY-Chains*, *Forcing Chains*, *Alternating Inference Chains*).
+### 1. 🧩 Sudoku Online (1 o 2 Jugadores)
+- **Modos de Juego**:
+  - **🎯 En Solitario**: Práctica individual.
+  - **🤝 En Pareja (Cooperativo)**: Dos jugadores resuelven **el mismo tablero juntos en tiempo real** con 3 vidas compartidas.
+  - **⚔️ Duelo (Versus)**: Tableros independientes compitiendo por terminar primero.
+- **Niveles de Dificultad Real**:
+  - **EXPERTO**: Requiere técnicas como *Pointing*, *Box-Line Reduction*, *Naked/Hidden Pairs/Triples*, *X-Wing*, *XY-Wing*.
+  - **EXTREMO**: Requiere *Swordfish*, *XYZ-Wing*, *W-Wing*, *Skyscraper*, *Two-String Kite*, *Simple Coloring*.
+  - **IMPOSIBLE**: Reducido a 17-22 pistas matemáticas exigiendo cadenas de inferencia complejas (*XY-Chains*, *Forcing Chains*, *AIC*, *Jellyfish*, *Finned Swordfish*).
+- **Sistema de 3 Vidas**: Cada casilla admite únicamente el número correcto. Al acumular 3 errores se pierde la partida.
 
-2. **Generador Matemático de Solución Única**:
-   - Generación 100% aleatoria con transformaciones simétricas válidas (permutaciones de números, bandas, columnas y transposición).
-   - Verificador estricto de solución única por Backtracking/Exact Cover con parada temprana.
-   - Ejecución en **Web Worker** en segundo plano para evitar bloqueos del navegador.
+---
 
-3. **Multijugador en Tiempo Real con Firebase**:
-   - Sistema de salas con código de 6 caracteres (ej. `X7K92P`) y enlaces directos (`?room=X7K92P`).
-   - Sincronización continua de progreso (% completado y celdas restantes).
-   - Detección de presencia en vivo (🟢 Conectado / 🔴 Desconectado) mediante `onDisconnect()`.
-   - Cronómetro sincronizado con offset de servidor (`.info/serverTimeOffset`).
+### 2. 🛑 STOP Online / Tutti Frutti / Basta (N Jugadores)
+- **Multijugador Masivo**: Juega con cualquier cantidad de participantes (2, 3, 5, 10 o más jugadores) en una misma sala.
+- **Rol de Capitán 👑**: Quien crea la sala inicia la partida, evalúa y asigna puntos (100, 50, 25, 0) y avanza de ronda.
+- **5 Rondas con Letras 100% Aleatorias**: Selección aleatoria sin repeticiones de la A a la Z (incluyendo Ñ) sincronizadas para todos.
+- **7 Categorías**: Nombre, Apellido, Fruta, Color, Animal, Artista, País.
+- **Botón STOP con Cuenta Regresiva de 5s**: Aviso en tiempo real con cuenta regresiva sincronizada (`5, 4, 3, 2, 1`), tras la cual se bloquean los campos.
 
-4. **Seguridad y Anti-Cheat**:
-   - La solución completa **nunca** se transmite en texto plano durante la partida.
-   - Validación mediante hash criptográfico `SHA-256(Solución + Salt)`.
-   - Reglas de seguridad de base de datos incluidas en `database.rules.json`.
+---
 
-5. **Experiencia de Usuario**:
-   - Interfaz oscura Cyber/Nordic responsive (móvil, tablet y escritorio).
-   - Teclado virtual táctil grande y soporte completo de teclado físico (1-9, flechas, Espacio, Ctrl+Z, Ctrl+Y).
-   - Modo de notas/candidatos (lápiz) con mini-cuadrícula 3x3 por celda y auto-eliminación de candidatos en pares/filas.
-   - Modo Competitivo (sin pistas de error inmediato) y Modo Normal.
-   - Efectos de sonido sintetizados con Web Audio API (cero dependencias externas).
+### 3. 🃏 Guerra / Shithead / Palace (1 a 4 Jugadores)
+- **1 Jugador**: Juega en solitario contra **3 bots inteligentes de IA** (Alfa, Beta, Gamma) con demoras naturales (800-1400ms).
+- **2 a 4 Jugadores**: Partida online exclusivamente entre personas reales conectadas (sin bots).
+- **Mecánicas y Reglas**:
+  - **Baraja de 52 cartas**: `3 < 4 < 5 < 6 < 7 < 8 < 9 < 10 < J < Q < K < A`.
+  - **Carta 2 (Reset)**: Se juega sobre cualquier carta y reinicia el valor para el siguiente jugador.
+  - **Carta 7 (Menor o Igual)**: Obliga al siguiente jugador a colocar una carta $\le 7$ (o un 2).
+  - **Carta 10 (Quema)**: Quema todo el montón central inmediatamente y otorga turno extra al jugador.
+  - **4 Cartas Iguales Consecutivas**: Queman el montón y dan turno extra.
+  - **Jugadas Múltiples**: Puedes lanzar varias cartas del mismo número juntas (ej: tres 8s).
+  - **Recoger el Montón**: Si no tienes jugada válida, recoges el montón central a tu mano privada.
+- **Estructura de Cartas**:
+  - **Fase de Preparación**: Recibes 3 cartas boca abajo + 6 cartas visibles. Eliges exactamente 3 para colocarlas boca arriba; las otras 3 quedan en tu mano privada.
+  - **Fase 1 (Mano y Robo)**: Juegas desde tu mano privada mientras robas del mazo hasta tener 3 cartas.
+  - **Fase 2 (Boca Arriba)**: Cuando se acaba el mazo y tu mano está vacía, juegas desde tus 3 cartas boca arriba.
+  - **Fase 3 (Boca Abajo a Ciegas)**: Cuando no te quedan cartas boca arriba, juegas a ciegas tus cartas boca abajo.
+  - **Victoria**: El primer jugador en quedarse sin cartas gana (🥇 1º, 🥈 2º, 🥉 3º, 4º).
+- **Privacidad Total**: Las manos privadas y las cartas boca abajo se mantienen en rutas protegidas en Firebase (`/guerra_private`), impidiendo que otros jugadores las espíen.
 
 ---
 
@@ -40,33 +53,27 @@ Web moderna, profesional y ultra-rápida de **Sudoku Multijugador en Tiempo Real
 
 ```text
 /
-├── index.html              # Estructura principal, vistas y modales
-├── style.css               # Diseño Cyber Dark, CSS Grid responsive y animaciones
-├── app.js                  # Controlador de interfaz, eventos y audio
-├── sudoku.js               # Motor lógico: solver humano, DLX y analizador de técnicas
-├── sudoku-worker.js        # Web Worker para generación no bloqueante
-├── multiplayer.js          # Sincronización en tiempo real con Firebase RTDB
-├── firebase-config.js      # Configuración y conector de Firebase
-├── database.rules.json     # Reglas de seguridad para Firebase Realtime Database
+├── index.html              # Portal de juegos, contenedor de Sudoku, STOP y Guerra
+├── style.css               # Estilos Cyber Dark responsive para toda la plataforma y cartas
+├── firebase-config.js      # Conexión y credenciales de Firebase
+├── database.rules.json     # Reglas de seguridad para Sudoku, STOP y Guerra
+├── platform.js             # Coordinador de navegación y catálogo de juegos
+│
+├── sudoku.js               # Motor de Sudoku (solución única DLX y analizador lógico)
+├── sudoku-worker.js        # Web Worker no bloqueante para Sudoku
+├── multiplayer.js          # Sincronización multijugador de Sudoku
+├── app.js                  # Controlador de interfaz de Sudoku
+│
+├── stop-game.js            # Motor y sincronización en tiempo real de STOP
+├── guerra-game.js          # Motor, reglas y sincronización de Guerra (1-4 jugadores con IA)
 └── README.md               # Documentación y guía de despliegue
 ```
-
----
-
-## ⚙️ Configuración de Firebase
-
-1. Crea un proyecto en [Firebase Console](https://console.firebase.google.com/).
-2. Ve a **Build > Realtime Database** y haz clic en **Create Database**.
-3. En la pestaña **Rules**, copia y pega el contenido del archivo `database.rules.json`.
-4. Ve a **Build > Authentication**, habilita **Anonymous sign-in**.
-5. Ve a **Project Settings** y copia tu configuración de Firebase.
-6. Puedes pegar tus claves directamente en `firebase-config.js` o introducirlas en la web pulsando el botón de ajustes ⚙️.
 
 ---
 
 ## 🌐 Despliegue en GitHub Pages
 
 1. Sube los archivos a tu repositorio de GitHub.
-2. Ve a **Settings > Pages** en tu repositorio.
-3. En **Branch**, selecciona `main` o `master` y la carpeta `/ (root)`.
-4. Haz clic en **Save**. En unos segundos tendrás tu web de Sudoku multijugador online lista para jugar desde cualquier parte del mundo.
+2. En GitHub, ve a **Settings > Pages**.
+3. Selecciona la rama `main` y la carpeta `/ (root)`.
+4. Pulsa **Save**. En segundos tu plataforma estará online.

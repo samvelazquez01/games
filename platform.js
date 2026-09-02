@@ -1,12 +1,12 @@
 /**
  * PLATFORM COORDINATOR & GAME PORTAL NAVIGATION
- * Coordinates navigation between Main Game Portal, Sudoku, STOP, Guerra, and Sombras del Bosque.
+ * Coordinates navigation between Main Game Portal, Sudoku, STOP, and Guerra card games.
  */
 
 (function (global) {
   'use strict';
 
-  let currentActiveGame = null; // 'sudoku' | 'stop' | 'guerra' | 'sombras' | null
+  let currentActiveGame = null; // 'sudoku' | 'stop' | 'guerra' | null
 
   function getPlayerName() {
     let name = localStorage.getItem('sudoku_player_name');
@@ -32,7 +32,6 @@
     const sudokuContainer = document.getElementById('sudoku-app-container');
     const stopContainer = document.getElementById('stop-app-container');
     const guerraContainer = document.getElementById('guerra-app-container');
-    const sombrasContainer = document.getElementById('sombras-app-container');
     const btnNavGames = document.getElementById('btn-nav-games');
 
     if (!gameId) {
@@ -42,7 +41,6 @@
       if (sudokuContainer) sudokuContainer.style.display = 'none';
       if (stopContainer) stopContainer.style.display = 'none';
       if (guerraContainer) guerraContainer.style.display = 'none';
-      if (sombrasContainer) sombrasContainer.style.display = 'none';
       if (btnNavGames) btnNavGames.style.display = 'none';
       return;
     }
@@ -55,12 +53,10 @@
       if (sudokuContainer) sudokuContainer.style.display = 'flex';
       if (stopContainer) stopContainer.style.display = 'none';
       if (guerraContainer) guerraContainer.style.display = 'none';
-      if (sombrasContainer) sombrasContainer.style.display = 'none';
     } else if (gameId === 'stop') {
       if (sudokuContainer) sudokuContainer.style.display = 'none';
       if (stopContainer) stopContainer.style.display = 'flex';
       if (guerraContainer) guerraContainer.style.display = 'none';
-      if (sombrasContainer) sombrasContainer.style.display = 'none';
       if (global.StopGame && global.StopGame.showView) {
         global.StopGame.showView('lobby');
       }
@@ -68,17 +64,8 @@
       if (sudokuContainer) sudokuContainer.style.display = 'none';
       if (stopContainer) stopContainer.style.display = 'none';
       if (guerraContainer) guerraContainer.style.display = 'flex';
-      if (sombrasContainer) sombrasContainer.style.display = 'none';
       if (global.GuerraGame && global.GuerraGame.showView) {
         global.GuerraGame.showView('lobby');
-      }
-    } else if (gameId === 'sombras') {
-      if (sudokuContainer) sudokuContainer.style.display = 'none';
-      if (stopContainer) stopContainer.style.display = 'none';
-      if (guerraContainer) guerraContainer.style.display = 'none';
-      if (sombrasContainer) sombrasContainer.style.display = 'flex';
-      if (global.SombrasGame && global.SombrasGame.showView) {
-        global.SombrasGame.showView('lobby');
       }
     }
   }
@@ -89,7 +76,7 @@
     const modal = document.getElementById('modal-game-rules');
     if (!modal) return;
 
-    const targetTab = preferredTab || currentActiveGame || 'sombras';
+    const targetTab = preferredTab || currentActiveGame || 'guerra';
     switchRulesTab(targetTab);
     modal.classList.add('active');
   }
@@ -102,7 +89,6 @@
   function switchRulesTab(tabKey) {
     const tabs = document.querySelectorAll('.rules-tab-btn');
     const contents = {
-      sombras: document.getElementById('rules-tab-content-sombras'),
       guerra: document.getElementById('rules-tab-content-guerra'),
       sudoku: document.getElementById('rules-tab-content-sudoku'),
       stop: document.getElementById('rules-tab-content-stop')
@@ -127,7 +113,7 @@
     const tabButtons = document.querySelectorAll('.rules-tab-btn');
 
     if (btnHeaderRules) {
-      btnHeaderRules.addEventListener('click', () => openRulesModal(currentActiveGame || 'sombras'));
+      btnHeaderRules.addEventListener('click', () => openRulesModal(currentActiveGame || 'guerra'));
     }
 
     if (btnCloseRules) {
@@ -158,7 +144,6 @@
     const cardSudoku = document.getElementById('portal-card-sudoku');
     const cardStop = document.getElementById('portal-card-stop');
     const cardGuerra = document.getElementById('portal-card-guerra');
-    const cardSombras = document.getElementById('portal-card-sombras');
 
     initRulesModalEvents();
 
@@ -170,11 +155,9 @@
         const sudNick = document.getElementById('input-nickname');
         const stopNick = document.getElementById('stop-nickname-input');
         const guerraNick = document.getElementById('guerra-nickname-input');
-        const sombrasNick = document.getElementById('sombras-nickname-input');
         if (sudNick) sudNick.value = clean;
         if (stopNick) stopNick.value = clean;
         if (guerraNick) guerraNick.value = clean;
-        if (sombrasNick) sombrasNick.value = clean;
       });
     }
 
@@ -190,10 +173,6 @@
       cardGuerra.addEventListener('click', () => switchGame('guerra'));
     }
 
-    if (cardSombras) {
-      cardSombras.addEventListener('click', () => switchGame('sombras'));
-    }
-
     if (btnNavGames) {
       btnNavGames.addEventListener('click', () => {
         if (confirm('¿Deseas volver al Menú Principal de Juegos?')) {
@@ -206,9 +185,6 @@
           if (currentActiveGame === 'guerra' && global.GuerraGame) {
             global.GuerraGame.leaveRoom();
           }
-          if (currentActiveGame === 'sombras' && global.SombrasGame) {
-            global.SombrasGame.leaveRoom();
-          }
           switchGame(null);
         }
       });
@@ -219,17 +195,7 @@
     const gameParam = urlParams.get('game');
     const roomParam = urlParams.get('room');
 
-    if (gameParam === 'sombras') {
-      switchGame('sombras');
-      if (roomParam) {
-        const joinInp = document.getElementById('sombras-input-join-code');
-        if (joinInp) joinInp.value = roomParam.trim().toUpperCase();
-        setTimeout(() => {
-          const btnJoin = document.getElementById('sombras-btn-join-room');
-          if (btnJoin) btnJoin.click();
-        }, 400);
-      }
-    } else if (gameParam === 'guerra') {
+    if (gameParam === 'guerra') {
       switchGame('guerra');
       if (roomParam) {
         const joinInp = document.getElementById('guerra-input-join-code');
@@ -264,9 +230,6 @@
     }
     if (global.GuerraGame && global.GuerraGame.init) {
       global.GuerraGame.init();
-    }
-    if (global.SombrasGame && global.SombrasGame.init) {
-      global.SombrasGame.init();
     }
   });
 

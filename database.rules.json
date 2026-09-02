@@ -28,22 +28,6 @@
           ".write": "auth != null"
         }
       }
-    },
-
-    "sombras_rooms": {
-      "$roomId": {
-        ".read": "auth != null",
-        ".write": "auth != null"
-      }
-    },
-
-    "sombras_private": {
-      "$roomId": {
-        "$uid": {
-          ".read": "auth != null",
-          ".write": "auth != null"
-        }
-      }
     }
   }
 }

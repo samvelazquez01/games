@@ -1222,31 +1222,42 @@ body {
   pointer-events: none;
 }
 
-/* Captain Score Selector Buttons */
 .btn-score-select {
   background: var(--bg-surface);
   border: 1px solid var(--border-color);
   color: var(--text-muted);
   font-family: var(--font-mono);
-  font-size: 11px;
-  font-weight: 700;
-  padding: 6px 10px;
+  font-size: 12px;
+  font-weight: 800;
+  padding: 6px 12px;
   border-radius: var(--radius-sm);
   cursor: pointer;
   transition: all 0.15s ease;
+  user-select: none;
 }
 
 .btn-score-select:hover {
   border-color: var(--text-main);
   color: var(--text-main);
+  transform: translateY(-1px);
 }
 
 .btn-score-select.active {
+  background: linear-gradient(135deg, #10b981, #059669);
+  border-color: #34d399;
+  color: #fff;
+  font-weight: 900;
+  box-shadow: 0 0 12px rgba(16, 185, 129, 0.5);
+  transform: scale(1.05);
+}
+
+#stop-live-score-strip::-webkit-scrollbar {
+  height: 4px;
+}
+
+#stop-live-score-strip::-webkit-scrollbar-thumb {
   background: var(--primary);
-  border-color: var(--primary);
-  color: #000;
-  font-weight: 800;
-  box-shadow: 0 0 10px var(--primary-glow);
+  border-radius: 4px;
 }
 
 .btn-score-select[data-score="100"].active {

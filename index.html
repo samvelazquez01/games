@@ -514,37 +514,37 @@
           
           <div class="input-group">
             <label class="input-label" for="stop-input-nombre">1. Nombre</label>
-            <input type="text" id="stop-input-nombre" class="text-input" placeholder="Ej: María..." autocomplete="off">
+            <input type="text" id="stop-input-nombre" class="text-input" autocomplete="off">
           </div>
 
           <div class="input-group">
             <label class="input-label" for="stop-input-apellido">2. Apellido</label>
-            <input type="text" id="stop-input-apellido" class="text-input" placeholder="Ej: Martínez..." autocomplete="off">
+            <input type="text" id="stop-input-apellido" class="text-input" autocomplete="off">
           </div>
 
           <div class="input-group">
             <label class="input-label" for="stop-input-fruta">3. Fruta</label>
-            <input type="text" id="stop-input-fruta" class="text-input" placeholder="Ej: Mango..." autocomplete="off">
+            <input type="text" id="stop-input-fruta" class="text-input" autocomplete="off">
           </div>
 
           <div class="input-group">
             <label class="input-label" for="stop-input-color">4. Color</label>
-            <input type="text" id="stop-input-color" class="text-input" placeholder="Ej: Morado..." autocomplete="off">
+            <input type="text" id="stop-input-color" class="text-input" autocomplete="off">
           </div>
 
           <div class="input-group">
             <label class="input-label" for="stop-input-animal">5. Animal</label>
-            <input type="text" id="stop-input-animal" class="text-input" placeholder="Ej: Mono..." autocomplete="off">
+            <input type="text" id="stop-input-animal" class="text-input" autocomplete="off">
           </div>
 
           <div class="input-group">
             <label class="input-label" for="stop-input-artista">6. Artista</label>
-            <input type="text" id="stop-input-artista" class="text-input" placeholder="Ej: Maluma..." autocomplete="off">
+            <input type="text" id="stop-input-artista" class="text-input" autocomplete="off">
           </div>
 
           <div class="input-group">
             <label class="input-label" for="stop-input-pais">7. País</label>
-            <input type="text" id="stop-input-pais" class="text-input" placeholder="Ej: México..." autocomplete="off">
+            <input type="text" id="stop-input-pais" class="text-input" autocomplete="off">
           </div>
 
           <!-- Giant STOP Button -->
@@ -564,12 +564,22 @@
         
         <div class="glass-card">
           <div style="display: flex; justify-content: space-between; align-items: center;">
-            <h2 id="stop-scoring-round-title" class="card-title" style="margin: 0;">Evaluación Ronda 1</h2>
+            <div>
+              <h2 id="stop-scoring-round-title" class="card-title" style="margin: 0;">Evaluación Ronda 1</h2>
+              <p style="font-size: 11px; color: var(--accent-cyan); margin: 2px 0 0 0; font-weight: 700;">
+                🔴 Puntuación en vivo: todos ven los puntos en tiempo real
+              </p>
+            </div>
             <span id="stop-scoring-letter-badge" class="difficulty-badge diff-EXPERTO">Letra: M</span>
           </div>
 
-          <p id="stop-player-scoring-waiting" style="display: none; font-size: 13px; color: var(--accent-amber); background: rgba(245, 158, 11, 0.12); padding: 10px; border-radius: var(--radius-sm); text-align: center;">
-            ⏳ El Capitán está revisando y asignando los puntos de la ronda...
+          <!-- Live Score Accumulation Strip -->
+          <div id="stop-live-score-strip" style="display: flex; gap: 8px; overflow-x: auto; padding: 10px; background: rgba(15, 23, 42, 0.85); border-radius: var(--radius-md); border: 1px solid var(--border-color); margin: 10px 0;">
+            <!-- Live accumulating player points rendered here -->
+          </div>
+
+          <p id="stop-player-scoring-waiting" style="display: none; font-size: 13px; color: var(--accent-amber); background: rgba(245, 158, 11, 0.12); padding: 10px; border-radius: var(--radius-sm); text-align: center; margin: 6px 0 10px 0;">
+            👑 El Capitán está calificando. ¡Observa tus puntos acumulándose en vivo!
           </p>
 
           <!-- Grouped Answers by Category for Captain Comparison -->
@@ -577,9 +587,9 @@
             <!-- Category cards populated dynamically -->
           </div>
 
-          <div id="stop-captain-scoring-actions" class="btn-group" style="display: none; margin-top: 10px;">
+          <div id="stop-captain-scoring-actions" class="btn-group" style="display: none; margin-top: 14px;">
             <button id="stop-btn-confirm-scores" class="btn btn-emerald" style="width: 100%; font-size: 15px; padding: 16px;">
-              <span>✅</span> CONFIRMAR PUNTUACIÓN DE LA RONDA
+              <span>✅</span> CONFIRMAR Y CONTINUAR
             </button>
           </div>
         </div>

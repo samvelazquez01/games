@@ -659,9 +659,17 @@
       <section id="guerra-view-lobby" class="view-section active">
         
         <div class="glass-card">
-          <div style="display: flex; align-items: center; gap: 10px;">
-            <span style="font-size: 28px;">🃏</span>
-            <h2 class="card-title" style="margin: 0;">Guerra de Cartas</h2>
+          <div style="display: flex; justify-content: space-between; align-items: center;">
+            <div style="display: flex; align-items: center; gap: 10px;">
+              <span style="font-size: 28px;">🃏</span>
+              <h2 class="card-title" style="margin: 0;">Guerra de Cartas</h2>
+            </div>
+            <!-- Player Coins Badge -->
+            <div id="guerra-header-coins-chip" style="display: flex; align-items: center; gap: 6px; background: rgba(245, 158, 11, 0.15); border: 1px solid var(--accent-amber); border-radius: var(--radius-full); padding: 4px 12px;">
+              <span style="font-size: 16px;">🪙</span>
+              <span id="guerra-my-coins-display" style="font-family: var(--font-mono); font-size: 14px; font-weight: 900; color: var(--accent-amber);">1,000</span>
+              <button id="guerra-btn-refill-coins" class="icon-btn" style="width: 22px; height: 22px; font-size: 11px; border-radius: 50%; border: none; background: var(--accent-amber); color: #000; font-weight: 900; margin-left: 2px;" title="Reclamar 500 monedas si te quedas sin fondos">🎁</button>
+            </div>
           </div>
 
           <div class="input-group">
@@ -669,12 +677,27 @@
             <input type="text" id="guerra-nickname-input" class="text-input" placeholder="Tu Apodo..." maxlength="20">
           </div>
 
+          <!-- Bet Selector (Monto a Apostar) -->
+          <div class="input-group">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
+              <label class="input-label" style="margin: 0;">Monto de la Apuesta (🪙 Monedas)</label>
+              <span style="font-size: 11px; color: var(--text-muted);">El ganador se lleva todo el bote</span>
+            </div>
+            <div id="guerra-bet-selector" class="btn-group" style="flex-wrap: wrap;">
+              <button class="btn btn-toggle-option" data-bet="50" style="flex: 1; min-width: 55px; padding: 8px 4px; font-size: 13px;">50 🪙</button>
+              <button class="btn btn-toggle-option active" data-bet="100" style="flex: 1; min-width: 55px; padding: 8px 4px; font-size: 13px;">100 🪙</button>
+              <button class="btn btn-toggle-option" data-bet="250" style="flex: 1; min-width: 55px; padding: 8px 4px; font-size: 13px;">250 🪙</button>
+              <button class="btn btn-toggle-option" data-bet="500" style="flex: 1; min-width: 55px; padding: 8px 4px; font-size: 13px;">500 🪙</button>
+              <button class="btn btn-toggle-option" data-bet="1000" style="flex: 1; min-width: 55px; padding: 8px 4px; font-size: 13px;">1,000 🪙</button>
+            </div>
+          </div>
+
           <div class="input-group">
             <label class="input-label">Información de la Partida</label>
             <div class="game-mode-grid">
               <div class="mode-card selected" style="cursor: default;">
                 <span class="mode-name">⚔️ 1 a 4 Jugadores</span>
-                <span class="mode-desc">1 jugador = Juega vs 3 bots de IA | 2-4 jugadores = Partida entre amigos</span>
+                <span class="mode-desc">1 jugador = Juega vs 3 bots de IA (los bots aceptan tu apuesta) | 2-4 jugadores = Partida entre amigos</span>
               </div>
             </div>
           </div>
@@ -711,9 +734,14 @@
         <div class="glass-card">
           <div style="display: flex; justify-content: space-between; align-items: center;">
             <h2 class="card-title"><span>🃏</span> Salón de Guerra</h2>
-            <span id="guerra-waiting-players-count" class="difficulty-badge" style="background: rgba(245, 158, 11, 0.2); color: var(--accent-amber); border: 1px solid var(--accent-amber);">
-              1 / 4 Jugadores
-            </span>
+            <div style="display: flex; gap: 6px;">
+              <span id="guerra-waiting-bet-badge" class="difficulty-badge" style="background: rgba(245, 158, 11, 0.2); color: var(--accent-amber); border: 1px solid var(--accent-amber);">
+                🪙 Apuesta: 100
+              </span>
+              <span id="guerra-waiting-players-count" class="difficulty-badge" style="background: rgba(245, 158, 11, 0.2); color: var(--accent-amber); border: 1px solid var(--accent-amber);">
+                1 / 4 Jugadores
+              </span>
+            </div>
           </div>
 
           <div class="room-code-display" style="border-color: var(--accent-amber);">
@@ -812,6 +840,12 @@
             ⚡ REGLA ACTIVA: Debe ser 7 o menor (o un 2)
           </div>
 
+          <!-- Table Live Pot Banner -->
+          <div id="guerra-table-pot-banner" style="display: flex; align-items: center; justify-content: center; gap: 8px; background: linear-gradient(135deg, rgba(245, 158, 11, 0.2), rgba(180, 83, 9, 0.3)); border: 1px solid var(--accent-amber); border-radius: var(--radius-full); padding: 4px 16px; margin: 0 auto; width: fit-content; box-shadow: 0 0 15px rgba(245, 158, 11, 0.3);">
+            <span style="font-size: 16px;">🪙</span>
+            <span style="font-weight: 800; font-size: 13px; color: var(--accent-amber);">BOTE TOTAL: <b id="guerra-live-pot-count">400</b> MONEDAS</span>
+          </div>
+
           <!-- Action Notification Banner -->
           <div id="guerra-action-notice" style="font-size: 12px; color: var(--text-muted); text-align: center; min-height: 16px; transition: opacity 0.3s; opacity: 0;"></div>
 
@@ -906,20 +940,26 @@
         
         <div class="glass-card" style="text-align: center;">
           <div id="guerra-podium-container" style="display: flex; flex-direction: column; align-items: center; gap: 6px; margin-bottom: 12px;">
-            <!-- Champion trophy -->
+            <!-- Champion trophy & Pot prize details -->
           </div>
 
           <div class="input-group" style="text-align: left;">
-            <label class="input-label">Clasificación Final de la Partida</label>
+            <label class="input-label">Clasificación Final y Reparto del Bote</label>
             <div style="background: var(--bg-surface); border-radius: var(--radius-md); padding: 10px 14px;">
               <table style="width: 100%; border-collapse: collapse; font-size: 14px;">
                 <thead>
                   <tr style="color: var(--text-dim); text-align: left; border-bottom: 1px solid var(--border-color);">
                     <th style="padding: 8px 4px;">Puesto</th>
                     <th style="padding: 8px 4px;">Jugador</th>
+                    <th style="padding: 8px 4px; text-align: right;">Premio / Apuesta</th>
                   </tr>
                 </thead>
                 <tbody id="guerra-results-table-body">
+                  <!-- Rankings rendered dynamically -->
+                </tbody>
+              </table>
+            </div>
+          </div>
                   <!-- Rankings rendered dynamically -->
                 </tbody>
               </table>
@@ -1079,6 +1119,18 @@
             <b>1. Mano Privada & Mazo:</b> Juegas desde tu mano y robas del mazo hasta tener siempre al menos 3 cartas.<br>
             <b>2. Cartas Boca Arriba:</b> Cuando se agota el mazo y te quedas sin cartas en mano, juegas desde tus 3 cartas boca arriba.<br>
             <b>3. Cartas Boca Abajo (A Ciegas):</b> Cuando no te quedan cartas boca arriba, volteas una de tus cartas ocultas. Si es válida la juegas; si no, ¡recoges todo el montón!
+          </div>
+        </div>
+
+        <div class="rule-card">
+          <div class="rule-card-title">
+            <span>🪙</span> Apuestas y Sistema de Monedas
+          </div>
+          <div class="rule-card-desc">
+            • Todos los jugadores inician con <b>1,000 monedas</b>.<br>
+            • El anfitrión de la sala elige la apuesta por jugador (ej: 50, 100, 250, 500, 1000 🪙).<br>
+            • En partidas contra la máquina, los <b>3 bots de IA aceptan automáticamente cualquier apuesta</b>.<br>
+            • ¡El primer jugador en quedarse sin cartas <b>gana el 100% del bote acumulado</b>!
           </div>
         </div>
 

@@ -3,6 +3,12 @@
  * 
  * Features:
  * - 1 to 4 players (1 player vs 3 AI bots; 2-4 real players without AI).
+ * - Betting & Coin System (🪙):
+ *   - Each player starts with 1,000 coins.
+ *   - Host/Player selects the bet amount (50, 100, 250, 500, 1000 🪙).
+ *   - In Solo mode, the 3 AI bots match and accept any bet amount.
+ *   - 1st place winner takes 100% of the accumulated Pot!
+ *   - Free emergency refill (+500 coins) if balance falls below 100.
  * - Square / Casino felt table layout with 4 relative seat positions (Sur, Oeste, Norte, Este).
  * - Animated card dealing phase with sound effects.
  * - Standard 52-card deck: 3 < 4 < 5 < 6 < 7 < 8 < 9 < 10 < J < Q < K < A.
@@ -18,6 +24,75 @@
 
 (function (global) {
   'use strict';
+
+  // --- COIN & CURRENCY SYSTEM ---
+  const COIN_STORAGE_KEY = 'guerra_player_coins';
+  const BONUS_CLAIMED_KEY = 'guerra_bonus_claimed';
+  const DEFAULT_COINS = 1000;
+  let selectedBetAmount = 100;
+  let payoutProcessedForMatch = null;
+
+  function getPlayerCoins() {
+    const stored = localStorage.getItem(COIN_STORAGE_KEY);
+    if (stored === null || isNaN(parseInt(stored, 10))) {
+      localStorage.setItem(COIN_STORAGE_KEY, DEFAULT_COINS.toString());
+      return DEFAULT_COINS;
+    }
+    return Math.max(0, parseInt(stored, 10));
+  }
+
+  function setPlayerCoins(amount) {
+    const clean = Math.max(0, parseInt(amount, 10) || 0);
+    localStorage.setItem(COIN_STORAGE_KEY, clean.toString());
+    updateCoinsDisplay();
+    return clean;
+  }
+
+  function addPlayerCoins(delta) {
+    const current = getPlayerCoins();
+    return setPlayerCoins(current + delta);
+  }
+
+  function isBonusClaimed() {
+    return localStorage.getItem(BONUS_CLAIMED_KEY) === 'true';
+  }
+
+  function claimFreeCoinsBonus() {
+    if (isBonusClaimed()) {
+      showToast('Ya has reclamado tu bono único de 500 monedas.', '⚠️');
+      return;
+    }
+    const current = getPlayerCoins();
+    if (current >= 100) {
+      showToast(`Tienes saldo suficiente (${current} 🪙). El bono único estará disponible si te quedas sin monedas.`, 'ℹ️');
+      return;
+    }
+    localStorage.setItem(BONUS_CLAIMED_KEY, 'true');
+    addPlayerCoins(500);
+    CardAudio.win();
+    showToast('¡Has reclamado tu bono ÚNICO de +500 Monedas! 🎁🪙', '🪙');
+    updateCoinsDisplay();
+  }
+
+  function updateCoinsDisplay() {
+    const coins = getPlayerCoins();
+    const display = document.getElementById('guerra-my-coins-display');
+    if (display) {
+      display.textContent = coins.toLocaleString();
+    }
+    const btnRefill = document.getElementById('guerra-btn-refill-coins');
+    if (btnRefill) {
+      if (isBonusClaimed()) {
+        btnRefill.style.opacity = '0.35';
+        btnRefill.style.cursor = 'not-allowed';
+        btnRefill.title = 'Bono de 500 monedas ya reclamado (Disponible solo una vez)';
+      } else {
+        btnRefill.style.opacity = '1';
+        btnRefill.style.cursor = 'pointer';
+        btnRefill.title = 'Reclamar bono único de 500 monedas si te quedas sin fondos';
+      }
+    }
+  }
 
   // Card Definition & Suits
   const SUITS = [
@@ -43,7 +118,6 @@
     { label: '2', value: 15, isSpecial: true } // 2 is special wildcard
   ];
 
-  // Helper to build a 52-card deck
   function createDeck() {
     const deck = [];
     let id = 1;
@@ -120,6 +194,10 @@
       },
       pickup: () => tone(330, 'triangle', 0.15, 0.12),
       turn: () => tone(750, 'sine', 0.05, 0.08),
+      coin: () => {
+        tone(987.77, 'sine', 0.08, 0.15);
+        setTimeout(() => tone(1318.51, 'sine', 0.15, 0.15), 60);
+      },
       win: () => {
         [523.25, 659.25, 783.99, 1046.5].forEach((f, i) => {
           setTimeout(() => tone(f, 'triangle', 0.25, 0.2), i * 120);
@@ -146,7 +224,7 @@
       faceDown: [],
       selectable6: []
     },
-    botPrivateData: {}, // Managed by Host client for AI bots
+    botPrivateData: {},
     room: null
   };
 
@@ -181,24 +259,16 @@
 
   function canPlayCard(card, pileTop, isLowerRestriction) {
     if (!card) return false;
-
-    // Card 2 (Reset) can ALWAYS be played on anything
     if (card.rank === '2') return true;
-
-    // Card 10 (Burn) can ALWAYS be played on anything
     if (card.rank === '10') return true;
-
-    // If pile is empty or pileTop was a 2 (reset), any card is valid
     if (!pileTop || pileTop.rank === '2') return true;
 
-    // If a 7 was played and restriction is active: must play <= 7 or a 2
     if (isLowerRestriction) {
       if (card.rank === '2') return true;
       const rankNum = card.rank === 'A' ? 14 : (card.value <= 7 ? card.value : -1);
       return rankNum >= 3 && rankNum <= 7;
     }
 
-    // Normal comparison: card.value >= pileTop.value
     return card.value >= pileTop.value;
   }
 
@@ -222,40 +292,37 @@
       results: document.getElementById('guerra-view-results')
     };
 
-    // Lobby
     DOM.inputNickname = document.getElementById('guerra-nickname-input');
     DOM.btnCreateRoom = document.getElementById('guerra-btn-create-room');
     DOM.btnViewRules = document.getElementById('guerra-btn-view-rules');
     DOM.inputJoinCode = document.getElementById('guerra-input-join-code');
     DOM.btnJoinRoom = document.getElementById('guerra-btn-join-room');
     DOM.btnGameRules = document.getElementById('guerra-btn-game-rules');
+    DOM.btnRefillCoins = document.getElementById('guerra-btn-refill-coins');
+    DOM.betButtons = document.querySelectorAll('#guerra-bet-selector .btn-toggle-option');
 
-    // Waiting Room
     DOM.displayRoomCode = document.getElementById('guerra-display-room-code');
     DOM.btnCopyCode = document.getElementById('guerra-btn-copy-code');
     DOM.btnShareRoom = document.getElementById('guerra-btn-share-room');
     DOM.waitingPlayersList = document.getElementById('guerra-waiting-players-list');
     DOM.waitingPlayersCount = document.getElementById('guerra-waiting-players-count');
+    DOM.waitingBetBadge = document.getElementById('guerra-waiting-bet-badge');
     DOM.btnHostStart = document.getElementById('guerra-btn-host-start');
     DOM.btnLeaveWaiting = document.getElementById('guerra-btn-leave-waiting');
 
-    // Dealing Animation Overlay
     DOM.dealingOverlay = document.getElementById('guerra-dealing-overlay');
     DOM.dealingText = document.getElementById('guerra-dealing-text');
 
-    // Setup Selection View
     DOM.setupSelectableCardsGrid = document.getElementById('guerra-setup-selectable-cards');
     DOM.setupSelectedCount = document.getElementById('guerra-setup-selected-count');
     DOM.btnConfirmSetup = document.getElementById('guerra-btn-confirm-setup');
     DOM.setupWaitingNotice = document.getElementById('guerra-setup-waiting-notice');
 
-    // Square Table Seats
     DOM.seatTop = document.getElementById('guerra-seat-top');
     DOM.seatLeft = document.getElementById('guerra-seat-left');
     DOM.seatRight = document.getElementById('guerra-seat-right');
     DOM.seatBottom = document.getElementById('guerra-seat-bottom');
 
-    // Center Pot & Pile
     DOM.drawDeckCount = document.getElementById('guerra-deck-count');
     DOM.playPile = document.getElementById('guerra-play-pile');
     DOM.playPileCount = document.getElementById('guerra-pile-count');
@@ -264,15 +331,14 @@
     DOM.turnPlayerName = document.getElementById('guerra-turn-player-name');
     DOM.actionNotice = document.getElementById('guerra-action-notice');
     DOM.ruleNotice = document.getElementById('guerra-rule-notice');
+    DOM.livePotCount = document.getElementById('guerra-live-pot-count');
 
-    // Player Bottom Area
     DOM.myTableCardsContainer = document.getElementById('guerra-my-table-cards');
     DOM.myHandCardsContainer = document.getElementById('guerra-my-hand-cards');
     DOM.btnPlaySelected = document.getElementById('guerra-btn-play-selected');
     DOM.btnPickupPile = document.getElementById('guerra-btn-pickup-pile');
     DOM.btnAbandonGame = document.getElementById('guerra-btn-abandon-game');
 
-    // Results View
     DOM.podiumContainer = document.getElementById('guerra-podium-container');
     DOM.resultsTableBody = document.getElementById('guerra-results-table-body');
     DOM.btnPlayAgain = document.getElementById('guerra-btn-play-again');
@@ -285,6 +351,7 @@
         DOM.views[key].classList.toggle('active', key === viewKey);
       }
     });
+    updateCoinsDisplay();
   }
 
   function showToast(msg, icon = 'ℹ️') {
@@ -340,7 +407,7 @@
   async function playDealingAnimation(playerNames) {
     if (!DOM.dealingOverlay) return;
     DOM.dealingOverlay.style.display = 'flex';
-    if (DOM.dealingText) DOM.dealingText.textContent = 'Repartiendo cartas a los jugadores...';
+    if (DOM.dealingText) DOM.dealingText.textContent = 'Repartiendo cartas y apostando...';
 
     const seats = ['seat-bottom', 'seat-left', 'seat-top', 'seat-right'];
     for (let i = 0; i < 8; i++) {
@@ -366,6 +433,12 @@
     const uid = getPlayerUid();
     const name = getPlayerName();
     const roomId = generateRoomCode();
+    const bet = selectedBetAmount;
+
+    // Verify balance
+    if (getPlayerCoins() < bet) {
+      throw new Error(`Saldo insuficiente (${getPlayerCoins()} 🪙). Necesitas ${bet} 🪙 para crear esta sala. Ajusta la apuesta o reclama el bono.`);
+    }
 
     const service = global.FirebaseService;
     let db = null;
@@ -378,10 +451,11 @@
     State.myUid = uid;
     State.isCreator = true;
     State.botPrivateData = {};
+    payoutProcessedForMatch = null;
 
     if (!db) {
       isSinglePlayerMode = true;
-      singlePlayerState = createLocalRoomState(roomId, uid, name);
+      singlePlayerState = createLocalRoomState(roomId, uid, name, bet);
       renderWaitingRoom(singlePlayerState);
       return roomId;
     }
@@ -393,6 +467,8 @@
     const initialPayload = {
       id: roomId,
       creatorId: uid,
+      betAmount: bet,
+      totalPot: bet,
       status: 'WAITING',
       currentTurnIndex: 0,
       activePlayerUid: null,
@@ -444,6 +520,11 @@
       throw new Error('La sala de Guerra no existe. Verifica el código.');
     }
 
+    const bet = room.betAmount || 100;
+    if (getPlayerCoins() < bet) {
+      throw new Error(`Saldo insuficiente (${getPlayerCoins()} 🪙). Esta sala requiere una apuesta de ${bet} 🪙.`);
+    }
+
     if (room.status !== 'WAITING') {
       if (room.players && room.players[uid]) {
         currentRoomId = cleanCode;
@@ -486,15 +567,18 @@
     currentRoomRef = roomRef;
     State.myUid = uid;
     State.isCreator = (room.creatorId === uid);
+    payoutProcessedForMatch = null;
 
     attachRoomListeners(roomRef, uid);
     return cleanCode;
   }
 
-  function createLocalRoomState(roomId, uid, name) {
+  function createLocalRoomState(roomId, uid, name, bet = 100) {
     return {
       id: roomId,
       creatorId: uid,
+      betAmount: bet,
+      totalPot: bet * 4,
       status: 'WAITING',
       currentTurnIndex: 0,
       activePlayerUid: null,
@@ -528,6 +612,8 @@
   // --- START GAME WORKFLOW & DEALING ---
 
   async function startGame() {
+    payoutProcessedForMatch = null;
+
     if (isSinglePlayerMode) {
       startLocalGame();
       return;
@@ -537,6 +623,12 @@
     const snap = await currentRoomRef.once('value');
     const room = snap.val();
     if (!room) return;
+
+    const bet = room.betAmount || selectedBetAmount || 100;
+    if (getPlayerCoins() < bet) {
+      showToast(`No tienes suficientes monedas (${getPlayerCoins()} 🪙) para la apuesta de ${bet} 🪙.`, '❌');
+      return;
+    }
 
     const players = room.players || {};
     const playerIds = Object.keys(players);
@@ -567,6 +659,13 @@
       }
     }
 
+    const totalPot = bet * turnOrder.length;
+
+    // Deduct bet from human host
+    addPlayerCoins(-bet);
+    CardAudio.coin();
+    showToast(`Apuesta de ${bet} 🪙 realizada. ¡Bote total: ${totalPot} 🪙!`, '🪙');
+
     const db = global.FirebaseService.getDb();
     const privateUpdates = {};
     State.botPrivateData = {};
@@ -576,7 +675,6 @@
       const selectable6 = [deck.pop(), deck.pop(), deck.pop(), deck.pop(), deck.pop(), deck.pop()];
 
       if (finalPlayers[pid].isAI) {
-        // AI Strategy: choose highest/special 3 cards for face-up
         selectable6.sort((a, b) => {
           const scoreA = a.rank === '2' ? 20 : (a.rank === '10' ? 19 : a.value);
           const scoreB = b.rank === '2' ? 20 : (b.rank === '10' ? 19 : b.value);
@@ -612,33 +710,44 @@
       }
     });
 
-    // Play dealing animation
     await playDealingAnimation(Object.values(finalPlayers).map(p => p.name));
 
-    // Save private cards to secure Firebase node
     try {
       await db.ref().update(privateUpdates);
     } catch (e) {
       console.warn('Private updates warning:', e);
     }
 
-    // Save public room state
     await currentRoomRef.update({
       status: 'SETUP',
+      betAmount: bet,
+      totalPot: totalPot,
       deckCount: deck.length,
       drawDeck: deck,
       players: finalPlayers,
-      turnOrder: turnOrder
+      turnOrder: turnOrder,
+      winners: []
     });
   }
 
   async function startLocalGame() {
     const uid = State.myUid;
     const name = getPlayerName();
-    const deck = createDeck();
+    const bet = singlePlayerState.betAmount || selectedBetAmount || 100;
 
+    if (getPlayerCoins() < bet) {
+      showToast(`No tienes suficientes monedas (${getPlayerCoins()} 🪙) para la apuesta de ${bet} 🪙.`, '❌');
+      return;
+    }
+
+    const deck = createDeck();
     const turnOrder = [uid, 'bot_1', 'bot_2', 'bot_3'];
     const botNames = ['Bot Alfa 🤖', 'Bot Beta 🤖', 'Bot Gamma 🤖'];
+    const totalPot = bet * 4;
+
+    addPlayerCoins(-bet);
+    CardAudio.coin();
+    showToast(`Apuesta de ${bet} 🪙 realizada. ¡Bote total: ${totalPot} 🪙!`, '🪙');
 
     singlePlayerState.players = {
       [uid]: {
@@ -657,7 +766,6 @@
 
     singlePlayerState.privateData = {};
 
-    // Deal Human
     const humanFaceDown = [deck.pop(), deck.pop(), deck.pop()];
     const humanSelectable = [deck.pop(), deck.pop(), deck.pop(), deck.pop(), deck.pop(), deck.pop()];
     singlePlayerState.privateData[uid] = {
@@ -666,7 +774,6 @@
       hand: []
     };
 
-    // Deal 3 Bots
     for (let i = 0; i < 3; i++) {
       const bid = `bot_${i + 1}`;
       const botFaceDown = [deck.pop(), deck.pop(), deck.pop()];
@@ -701,9 +808,12 @@
     await playDealingAnimation(['Tú', ...botNames]);
 
     singlePlayerState.status = 'SETUP';
+    singlePlayerState.betAmount = bet;
+    singlePlayerState.totalPot = totalPot;
     singlePlayerState.deck = deck;
     singlePlayerState.deckCount = deck.length;
     singlePlayerState.turnOrder = turnOrder;
+    singlePlayerState.winners = [];
 
     renderSetupView(singlePlayerState, uid);
   }
@@ -753,43 +863,45 @@
     if (DOM.btnConfirmSetup) {
       DOM.btnConfirmSetup.disabled = true;
       DOM.btnConfirmSetup.style.display = 'block';
-      DOM.btnConfirmSetup.onclick = () => confirmInitialSetup(selectable6);
     }
     if (DOM.setupWaitingNotice) DOM.setupWaitingNotice.style.display = 'none';
 
     showView('setup');
   }
 
-  async function confirmInitialSetup(selectable6) {
-    if (State.selectedForSetup.size !== 3) {
-      showToast('Debes seleccionar exactamente 3 cartas.', '⚠️');
-      return;
-    }
-
-    const chosenFaceUp = Array.from(State.selectedForSetup);
-    const chosenHand = selectable6.filter(c => !State.selectedForSetup.has(c));
+  async function confirmSetup() {
+    if (State.selectedForSetup.size !== 3) return;
     const myUid = State.myUid;
+    const chosenFaceUp = Array.from(State.selectedForSetup);
 
     if (isSinglePlayerMode) {
+      const pData = singlePlayerState.privateData[myUid];
+      const all6 = pData.selectable6 || [];
+      const privateHand = all6.filter(c => !chosenFaceUp.some(cf => cf.id === c.id));
+
+      pData.hand = privateHand;
+      delete pData.selectable6;
+
       singlePlayerState.players[myUid].faceUp = chosenFaceUp;
       singlePlayerState.players[myUid].setupReady = true;
-      singlePlayerState.privateData[myUid].hand = chosenHand;
-      singlePlayerState.privateData[myUid].selectable6 = null;
 
-      finishSetupAndStartPlaying(singlePlayerState);
+      // Start Playing
+      singlePlayerState.status = 'PLAYING';
+      singlePlayerState.activePlayerUid = singlePlayerState.turnOrder[0];
+      singlePlayerState.currentTurnIndex = 0;
+      renderGameTable(singlePlayerState, myUid);
       return;
     }
 
-    // Firebase Multiplayer Update
+    // Multiplayer Firebase Flow
+    const all6 = State.myPrivateCards.selectable6 || [];
+    const privateHand = all6.filter(c => !chosenFaceUp.some(cf => cf.id === c.id));
+
     const db = global.FirebaseService.getDb();
-    try {
-      await db.ref(`guerra_private/${currentRoomId}/${myUid}`).update({
-        hand: chosenHand,
-        selectable6: null
-      });
-    } catch (e) {
-      console.warn('Update hand warning:', e);
-    }
+    await db.ref(`guerra_private/${currentRoomId}/${myUid}`).set({
+      hand: privateHand,
+      faceDown: State.myPrivateCards.faceDown || []
+    });
 
     await currentRoomRef.child(`players/${myUid}`).update({
       faceUp: chosenFaceUp,
@@ -799,156 +911,90 @@
     if (DOM.setupWaitingNotice) DOM.setupWaitingNotice.style.display = 'block';
     if (DOM.btnConfirmSetup) DOM.btnConfirmSetup.style.display = 'none';
 
+    // Host checks if all ready -> transition to PLAYING
     if (State.isCreator) {
-      checkAllPlayersReadyAndStart();
+      const snap = await currentRoomRef.once('value');
+      const r = snap.val();
+      const allPlayers = Object.values(r.players || {});
+      const allReady = allPlayers.every(p => p.setupReady);
+
+      if (allReady) {
+        await currentRoomRef.update({
+          status: 'PLAYING',
+          activePlayerUid: r.turnOrder[0],
+          currentTurnIndex: 0
+        });
+      }
     }
   }
 
-  async function checkAllPlayersReadyAndStart() {
-    if (!currentRoomRef) return;
-    const snap = await currentRoomRef.once('value');
-    const room = snap.val();
-    if (!room) return;
-
-    const players = room.players || {};
-    const allReady = Object.values(players).every(p => p.setupReady);
-
-    if (allReady && room.status === 'SETUP') {
-      const turnOrder = room.turnOrder || Object.keys(players);
-      const startingIndex = Math.floor(Math.random() * turnOrder.length);
-      const activeUid = turnOrder[startingIndex];
-
-      await currentRoomRef.update({
-        status: 'PLAYING',
-        currentTurnIndex: startingIndex,
-        activePlayerUid: activeUid,
-        pile: [],
-        pileTop: null,
-        isLowerRestriction: false
-      });
-    }
-  }
-
-  function finishSetupAndStartPlaying(localState) {
-    const turnOrder = localState.turnOrder;
-    const startingIndex = Math.floor(Math.random() * turnOrder.length);
-    localState.currentTurnIndex = startingIndex;
-    localState.activePlayerUid = turnOrder[startingIndex];
-    localState.status = 'PLAYING';
-    localState.pile = [];
-    localState.pileTop = null;
-    localState.isLowerRestriction = false;
-
-    renderGameTable(localState, State.myUid);
-    checkAndTriggerAI(localState);
-  }
-
-  // --- GAMEPLAY: TURN EXECUTION & ACTIONS ---
+  // --- GAMEPLAY ENGINE: PLAY CARDS, BURNS, SPECIALS ---
 
   async function playSelectedCards() {
-    const selected = Array.from(State.selectedCardsToPlay);
-    if (selected.length === 0) return;
+    if (State.selectedCardsToPlay.size === 0) return;
+    const selectedCards = Array.from(State.selectedCardsToPlay);
+    const first = selectedCards[0];
 
-    const myUid = State.myUid;
-    const room = isSinglePlayerMode ? singlePlayerState : State.room;
-    if (!room || room.activePlayerUid !== myUid) {
-      showToast('No es tu turno.', '⏳');
+    // Must be all of same rank
+    const allSame = selectedCards.every(c => c.rank === first.rank);
+    if (!allSame) {
+      showToast('Solo puedes jugar varias cartas si son del mismo número.', '⚠️');
       return;
     }
 
+    const room = isSinglePlayerMode ? singlePlayerState : State.room;
     const pileTop = room.pileTop;
     const isLower = room.isLowerRestriction;
 
-    // Validate all selected cards have the same rank
-    const firstRank = selected[0].rank;
-    const allSameRank = selected.every(c => c.rank === firstRank);
-    if (!allSameRank) {
-      showToast('Solo puedes jugar varias cartas si tienen el mismo número.', '⚠️');
+    if (!canPlayCard(first, pileTop, isLower)) {
+      showToast('Esta carta no cumple las reglas para jugarse sobre el montón.', '❌');
       return;
     }
 
-    if (!canPlayCard(selected[0], pileTop, isLower)) {
-      showToast('Esa carta no es válida sobre el montón actual.', '❌');
-      return;
-    }
-
-    executePlayAction(myUid, selected);
+    await executePlayAction(State.myUid, selectedCards);
   }
 
   async function playBlindFaceDownCard(cardIndex) {
-    const myUid = State.myUid;
     const room = isSinglePlayerMode ? singlePlayerState : State.room;
-    if (!room || room.activePlayerUid !== myUid) {
+    if (room.activePlayerUid !== State.myUid) {
       showToast('No es tu turno.', '⏳');
       return;
     }
 
-    const privateInfo = isSinglePlayerMode
-      ? singlePlayerState.privateData[myUid]
-      : State.myPrivateCards;
+    const privateInfo = isSinglePlayerMode ? singlePlayerState.privateData[State.myUid] : State.myPrivateCards;
+    const faceDown = privateInfo.faceDown || [];
+    if (cardIndex >= faceDown.length) return;
 
-    let faceDownCards = privateInfo.faceDown || [];
-    if (faceDownCards.length === 0) {
-      faceDownCards = [getRandomCard()];
-      privateInfo.faceDown = faceDownCards;
-    }
-
-    const revealedCard = faceDownCards.splice(cardIndex, 1)[0] || getRandomCard();
+    const revealedCard = faceDown.splice(cardIndex, 1)[0];
     const pileTop = room.pileTop;
     const isLower = room.isLowerRestriction;
 
-    const isValid = canPlayCard(revealedCard, pileTop, isLower);
-
-    if (isValid) {
-      showToast(`¡Carta boca abajo: ${revealedCard.name}! (Válida) ✅`, '🂠');
-      executePlayAction(myUid, [revealedCard], true);
+    if (canPlayCard(revealedCard, pileTop, isLower)) {
+      showToast(`¡Revelaste ${revealedCard.name} y es válida! ✅`, '🎉');
+      await executePlayAction(State.myUid, [revealedCard], true);
     } else {
-      showToast(`¡Carta boca abajo: ${revealedCard.name}! (No válida, recoges el montón) ❌`, '💥');
-      executePickupAction(myUid, revealedCard);
+      showToast(`Revelaste ${revealedCard.name} (no válida). ¡Recoges todo el montón! 💥`, '❌');
+      await executePickupAction(State.myUid, revealedCard);
     }
   }
 
   async function pickupPile() {
-    const myUid = State.myUid;
     const room = isSinglePlayerMode ? singlePlayerState : State.room;
-    if (!room || room.activePlayerUid !== myUid) {
+    if (room.activePlayerUid !== State.myUid) {
       showToast('No es tu turno.', '⏳');
       return;
     }
-
-    if (!room.pile || room.pile.length === 0) {
-      showToast('El montón está vacío.', 'ℹ️');
-      return;
-    }
-
-    executePickupAction(myUid);
+    await executePickupAction(State.myUid);
   }
 
-  async function executePlayAction(playerUid, cardsPlayed, wasBlindFaceDown = false) {
+  async function executePlayAction(playerUid, playedCards, isFromFaceDown = false) {
     const room = isSinglePlayerMode ? singlePlayerState : State.room;
     if (!room || !room.players || !room.players[playerUid]) return;
 
     const player = room.players[playerUid];
-    const cardRank = cardsPlayed[0].rank;
+    const firstCard = playedCards[0];
+    CardAudio.playCard();
 
-    const is10Burn = cardRank === '10';
-    const is4OfAKindBurn = checkFourOfAKindBurn(room.pile || [], cardsPlayed);
-    const isBurn = is10Burn || is4OfAKindBurn;
-    const is7Played = cardRank === '7';
-
-    let newPile = isBurn ? [] : [...(room.pile || []), ...cardsPlayed];
-    let newPileTop = isBurn ? null : cardsPlayed[cardsPlayed.length - 1];
-
-    if (isBurn) {
-      CardAudio.burn();
-      triggerBurnAnimation();
-      showActionBanner(`💥 ¡${player.name} quemó el montón con ${cardRank}! Turno extra.`);
-    } else {
-      CardAudio.playCard();
-      showActionBanner(`${player.name} jugó ${cardsPlayed.map(c => c.name).join(' + ')}`);
-    }
-
-    // Resolve private cards container for this player
     let privateInfo;
     if (isSinglePlayerMode) {
       privateInfo = singlePlayerState.privateData[playerUid] || { hand: [], faceDown: [] };
@@ -961,22 +1007,70 @@
       privateInfo = State.myPrivateCards;
     }
 
-    if (!wasBlindFaceDown) {
-      if (privateInfo.hand && privateInfo.hand.length > 0) {
-        const playedIds = new Set(cardsPlayed.map(c => c.id));
-        privateInfo.hand = privateInfo.hand.filter(c => !playedIds.has(c.id));
-      } else if (player.faceUp && player.faceUp.length > 0) {
-        const playedIds = new Set(cardsPlayed.map(c => c.id));
-        player.faceUp = player.faceUp.filter(c => !playedIds.has(c.id));
+    // Remove played cards from source
+    if (!isFromFaceDown) {
+      const hand = privateInfo.hand || [];
+      if (hand.length > 0) {
+        playedCards.forEach(pc => {
+          const idx = hand.findIndex(c => c.id === pc.id);
+          if (idx !== -1) hand.splice(idx, 1);
+        });
+        privateInfo.hand = hand;
+      } else {
+        // From face-up
+        const faceUp = player.faceUp || [];
+        playedCards.forEach(pc => {
+          const idx = faceUp.findIndex(c => c.id === pc.id);
+          if (idx !== -1) faceUp.splice(idx, 1);
+        });
+        player.faceUp = faceUp;
       }
     }
 
-    // Draw cards from deck if available
-    let drawDeck = isSinglePlayerMode ? singlePlayerState.deck : (room.drawDeck || []);
-    if (drawDeck && drawDeck.length > 0 && privateInfo.hand) {
-      while (privateInfo.hand.length < 3 && drawDeck.length > 0) {
-        privateInfo.hand.push(drawDeck.pop());
+    // Refill Hand up to 3 from draw deck
+    const drawDeck = isSinglePlayerMode ? singlePlayerState.deck : (room.drawDeck || []);
+    while ((privateInfo.hand || []).length < 3 && drawDeck.length > 0) {
+      const drawn = drawDeck.pop();
+      if (drawn) {
+        privateInfo.hand.push(drawn);
       }
+    }
+
+    // Check Special Rules & Burns
+    let newPile = [...(room.pile || []), ...playedCards];
+    let newPileTop = firstCard;
+    let isBurn = false;
+    let is7Played = false;
+
+    // 10 = Burn Pile + Extra Turn
+    if (firstCard.rank === '10') {
+      isBurn = true;
+      newPile = [];
+      newPileTop = null;
+      CardAudio.burn();
+      triggerBurnAnimation();
+      showActionBanner(`💥 ¡${player.name} tiró un 10 y quemó el montón! (Turno extra)`);
+    }
+    // 4 of a kind consecutive = Burn Pile + Extra Turn
+    else if (checkFourOfAKindBurn(room.pile || [], playedCards)) {
+      isBurn = true;
+      newPile = [];
+      newPileTop = null;
+      CardAudio.burn();
+      triggerBurnAnimation();
+      showActionBanner(`🔥 ¡4 cartas iguales consecutivas! ${player.name} quemó el montón (Turno extra).`);
+    }
+    // 2 = Reset pile top
+    else if (firstCard.rank === '2') {
+      showActionBanner(`🃏 ${player.name} jugó un 2 (Reinicio). La siguiente carta puede ser cualquiera.`);
+    }
+    // 7 = Lower restriction
+    else if (firstCard.rank === '7') {
+      is7Played = true;
+      showActionBanner(`⚡ ${player.name} jugó un 7. ¡El siguiente debe tirar 7 o menor!`);
+    }
+    else {
+      showActionBanner(`${player.name} jugó ${playedCards.map(c => c.name).join(', ')}.`);
     }
 
     player.handCount = (privateInfo.hand && privateInfo.hand.length) || 0;
@@ -1155,7 +1249,6 @@
     const player = room.players && room.players[activeUid];
     if (!player || !player.isAI || player.isFinished) return;
 
-    // Only creator/host or local mode executes bots
     if (!isSinglePlayerMode && !State.isCreator) return;
 
     if (aiTurnTimeout) clearTimeout(aiTurnTimeout);
@@ -1166,7 +1259,6 @@
         executeAITurn(activeUid, room);
       } catch (err) {
         console.error('AI Turn error:', err);
-        // Fallback: pickup pile to avoid hang
         executePickupAction(activeUid);
       }
     }, delay);
@@ -1215,7 +1307,7 @@
       return;
     }
 
-    // 2. Play from Face-Up Cards (when hand is empty)
+    // 2. Play from Face-Up Cards
     const faceUp = player.faceUp || [];
     if (faceUp.length > 0) {
       const legalFaceUp = faceUp.filter(c => canPlayCard(c, pileTop, isLower));
@@ -1248,7 +1340,6 @@
         executePickupAction(botUid, revealed);
       }
     } else {
-      // Finished!
       executePlayAction(botUid, [getRandomCard()], true);
     }
   }
@@ -1281,6 +1372,12 @@
       } else {
         DOM.ruleNotice.style.display = 'none';
       }
+    }
+
+    // Live Pot Display
+    const totalPot = room.totalPot || ((room.betAmount || 100) * turnOrder.length);
+    if (DOM.livePotCount) {
+      DOM.livePotCount.textContent = totalPot.toLocaleString();
     }
 
     // Render Deck & Central Pile
@@ -1356,7 +1453,7 @@
     const myFaceUp = myPublic.faceUp || [];
     const myFaceDownCount = (myPrivate && myPrivate.faceDown) ? myPrivate.faceDown.length : (myPublic.faceDownCount || 0);
 
-    // 1. Table Cards (Face-Down + Face-Up on top)
+    // 1. Table Cards
     if (DOM.myTableCardsContainer) {
       let tableHtml = '';
       for (let i = 0; i < 3; i++) {
@@ -1452,31 +1549,61 @@
     }
   }
 
-  // --- RESULTS & PODIUM VIEW ---
+  // --- RESULTS & PODIUM VIEW WITH COIN PAYOUTS ---
 
   function renderResultsView(room) {
     const winners = room.winners || [];
+    const bet = room.betAmount || 100;
+    const totalPot = room.totalPot || (bet * (room.turnOrder || []).length);
+    const champion = winners[0] || { name: 'Campeón' };
+
+    // Process payout once per match
+    if (payoutProcessedForMatch !== (room.id || 'match')) {
+      payoutProcessedForMatch = (room.id || 'match');
+      if (champion.uid === State.myUid) {
+        // Human player won 1st place!
+        addPlayerCoins(totalPot);
+        CardAudio.win();
+        showToast(`¡HAS GANADO EL BOTE DE ${totalPot} MONEDAS! 🏆🪙`, '🎉');
+      } else {
+        showToast(`Has perdido tu apuesta de ${bet} monedas.`, '📉');
+      }
+    }
 
     if (DOM.podiumContainer) {
-      const champion = winners[0] || { name: 'Campeón' };
+      const isWinnerMe = champion.uid === State.myUid;
       DOM.podiumContainer.innerHTML = `
         <div style="font-size: 56px; filter: drop-shadow(0 0 20px var(--accent-amber-glow));">🏆</div>
         <h2 style="font-size: 26px; font-weight: 900; color: #fff; margin-top: -6px;">¡${champion.name.toUpperCase()} HA GANADO!</h2>
-        <p style="color: var(--accent-amber); font-size: 15px; font-weight: 700;">¡Victoria en la Guerra de Cartas!</p>
+        <div style="display: flex; align-items: center; justify-content: center; gap: 8px; background: rgba(245, 158, 11, 0.15); border: 1px solid var(--accent-amber); border-radius: var(--radius-full); padding: 6px 18px; margin-top: 4px;">
+          <span style="font-size: 20px;">🪙</span>
+          <span style="color: var(--accent-amber); font-size: 16px; font-weight: 900;">
+            ${isWinnerMe ? `¡Te llevas el Bote Completo de +${totalPot} Monedas!` : `Bote ganado por ${champion.name}: ${totalPot} Monedas`}
+          </span>
+        </div>
       `;
     }
 
     if (DOM.resultsTableBody) {
-      DOM.resultsTableBody.innerHTML = winners.map(w => `
-        <tr style="border-bottom: 1px solid rgba(51, 65, 85, 0.4);">
-          <td style="padding: 12px 8px; font-size: 18px; font-weight: 800;">
-            ${w.place === 1 ? '🥇 1.º' : w.place === 2 ? '🥈 2.º' : w.place === 3 ? '🥉 3.º' : '4.º'}
-          </td>
-          <td style="padding: 12px 8px; font-weight: 700; color: var(--text-main);">
-            ${w.name} ${w.uid === State.myUid ? '(Tú)' : ''}
-          </td>
-        </tr>
-      `).join('');
+      DOM.resultsTableBody.innerHTML = winners.map(w => {
+        const isFirst = w.place === 1;
+        const profit = isFirst ? (totalPot - bet) : -bet;
+        const profitStr = isFirst ? `+${totalPot} 🪙 (Ganancia: +${profit})` : `-${bet} 🪙`;
+
+        return `
+          <tr style="border-bottom: 1px solid rgba(51, 65, 85, 0.4); ${isFirst ? 'background: rgba(245, 158, 11, 0.1);' : ''}">
+            <td style="padding: 12px 8px; font-size: 18px; font-weight: 800;">
+              ${w.place === 1 ? '🥇 1.º' : w.place === 2 ? '🥈 2.º' : w.place === 3 ? '🥉 3.º' : '4.º'}
+            </td>
+            <td style="padding: 12px 8px; font-weight: 700; color: var(--text-main);">
+              ${w.name} ${w.uid === State.myUid ? '(Tú)' : ''}
+            </td>
+            <td style="padding: 12px 8px; text-align: right; font-family: var(--font-mono); font-weight: 800; color: ${isFirst ? 'var(--accent-emerald)' : 'var(--accent-rose)'};">
+              ${profitStr}
+            </td>
+          </tr>
+        `;
+      }).join('');
     }
 
     if (State.isCreator) {
@@ -1484,6 +1611,8 @@
     } else {
       if (DOM.btnPlayAgain) DOM.btnPlayAgain.style.display = 'none';
     }
+
+    updateCoinsDisplay();
   }
 
   // --- REALTIME LISTENERS & PRESENCE ---
@@ -1542,6 +1671,12 @@
     const playerList = Object.values(room.players || {});
     if (DOM.waitingPlayersCount) DOM.waitingPlayersCount.textContent = `${playerList.length} / 4 Jugadores`;
 
+    const bet = room.betAmount || selectedBetAmount || 100;
+    const pot = bet * playerList.length;
+    if (DOM.waitingBetBadge) {
+      DOM.waitingBetBadge.textContent = `🪙 Apuesta: ${bet} | Bote: ${pot}`;
+    }
+
     if (DOM.waitingPlayersList) {
       DOM.waitingPlayersList.innerHTML = playerList.map(p => `
         <div class="player-slot-card ready" style="padding: 10px 14px;">
@@ -1557,8 +1692,8 @@
     if (DOM.btnHostStart) {
       DOM.btnHostStart.style.display = State.isCreator ? 'flex' : 'none';
       DOM.btnHostStart.innerHTML = playerList.length === 1
-        ? '<span>🤖</span> INICIAR (SOLO VS 3 IA)'
-        : `<span>⚔️</span> INICIAR PARTIDA (${playerList.length} JUGADORES)`;
+        ? `<span>🤖</span> INICIAR (SOLO VS 3 IA - BOTE: ${bet * 4} 🪙)`
+        : `<span>⚔️</span> INICIAR PARTIDA (${playerList.length} JUGADORES - BOTE: ${pot} 🪙)`;
     }
 
     showView('waiting');
@@ -1580,6 +1715,7 @@
     currentRoomId = null;
     isSinglePlayerMode = false;
     singlePlayerState = null;
+    payoutProcessedForMatch = null;
     if (aiTurnTimeout) clearTimeout(aiTurnTimeout);
 
     showView('lobby');
@@ -1596,6 +1732,23 @@
         DOM.inputNickname.value = clean;
         showToast(`Nombre actualizado: ${clean}`, '👤');
       });
+    }
+
+    // Bet selection buttons in lobby
+    if (DOM.betButtons) {
+      DOM.betButtons.forEach(btn => {
+        btn.addEventListener('click', () => {
+          DOM.betButtons.forEach(b => b.classList.remove('active'));
+          btn.classList.add('active');
+          selectedBetAmount = parseInt(btn.dataset.bet, 10) || 100;
+          CardAudio.click();
+        });
+      });
+    }
+
+    // Claim bonus button
+    if (DOM.btnRefillCoins) {
+      DOM.btnRefillCoins.addEventListener('click', claimFreeCoinsBonus);
     }
 
     if (DOM.btnCreateRoom) {
@@ -1650,6 +1803,7 @@
       DOM.btnHostStart.addEventListener('click', startGame);
     }
 
+    if (DOM.btnConfirmSetup) DOM.btnConfirmSetup.addEventListener('click', confirmSetup);
     if (DOM.btnPlaySelected) DOM.btnPlaySelected.addEventListener('click', playSelectedCards);
     if (DOM.btnPickupPile) DOM.btnPickupPile.addEventListener('click', pickupPile);
     if (DOM.btnLeaveWaiting) DOM.btnLeaveWaiting.addEventListener('click', leaveRoom);
@@ -1686,6 +1840,7 @@
   function init() {
     cacheDOM();
     initEvents();
+    updateCoinsDisplay();
   }
 
   const GuerraGame = {
@@ -1693,7 +1848,10 @@
     createRoom,
     joinRoom,
     leaveRoom,
-    showView
+    showView,
+    getPlayerCoins,
+    setPlayerCoins,
+    addPlayerCoins
   };
 
   if (typeof module !== 'undefined' && module.exports) {

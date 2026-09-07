@@ -198,6 +198,10 @@
         tone(987.77, 'sine', 0.08, 0.15);
         setTimeout(() => tone(1318.51, 'sine', 0.15, 0.15), 60);
       },
+      chat: () => {
+        tone(587.33, 'sine', 0.05, 0.08);
+        setTimeout(() => tone(880, 'sine', 0.08, 0.1), 45);
+      },
       win: () => {
         [523.25, 659.25, 783.99, 1046.5].forEach((f, i) => {
           setTimeout(() => tone(f, 'triangle', 0.25, 0.2), i * 120);
@@ -280,6 +284,25 @@
     return last4.every(c => c.rank === targetRank);
   }
 
+  // Card Sorting Ascending (3 < 4 < 5 < 6 < 7 < 8 < 9 < 10 < J < Q < K < A < 2)
+  const RANK_SORT_ORDER = {
+    '3': 3, '4': 4, '5': 5, '6': 6, '7': 7, '8': 8, '9': 9, '10': 10,
+    'J': 11, 'Q': 12, 'K': 13, 'A': 14, '2': 15
+  };
+  const SUIT_SORT_ORDER = { '♠': 1, '♥': 2, '♦': 3, '♣': 4 };
+
+  function sortCardsAscending(cards) {
+    if (!Array.isArray(cards)) return [];
+    return [...cards].sort((a, b) => {
+      const valA = a.value !== undefined ? a.value : (RANK_SORT_ORDER[a.rank] || 0);
+      const valB = b.value !== undefined ? b.value : (RANK_SORT_ORDER[b.rank] || 0);
+      if (valA !== valB) return valA - valB;
+      const sA = SUIT_SORT_ORDER[a.suit] || 0;
+      const sB = SUIT_SORT_ORDER[b.suit] || 0;
+      return sA - sB;
+    });
+  }
+
   // --- DOM CACHING ---
   const DOM = {};
 
@@ -309,6 +332,20 @@
     DOM.waitingBetBadge = document.getElementById('guerra-waiting-bet-badge');
     DOM.btnHostStart = document.getElementById('guerra-btn-host-start');
     DOM.btnLeaveWaiting = document.getElementById('guerra-btn-leave-waiting');
+
+    // Chat DOM Elements
+    DOM.btnWaitingChat = document.getElementById('guerra-btn-waiting-chat');
+    DOM.waitingChatBadge = document.getElementById('guerra-waiting-chat-badge');
+    DOM.btnGameChat = document.getElementById('guerra-btn-game-chat');
+    DOM.gameChatBadge = document.getElementById('guerra-game-chat-badge');
+    DOM.chatToggleBtn = document.getElementById('guerra-chat-toggle-btn');
+    DOM.chatUnreadBadge = document.getElementById('guerra-chat-unread-badge');
+    DOM.chatOverlay = document.getElementById('guerra-chat-overlay');
+    DOM.chatCloseBtn = document.getElementById('guerra-chat-close-btn');
+    DOM.chatMessagesContainer = document.getElementById('guerra-chat-messages');
+    DOM.chatForm = document.getElementById('guerra-chat-form');
+    DOM.chatInput = document.getElementById('guerra-chat-input');
+    DOM.chatSendBtn = document.getElementById('guerra-chat-send-btn');
 
     DOM.dealingOverlay = document.getElementById('guerra-dealing-overlay');
     DOM.dealingText = document.getElementById('guerra-dealing-text');
@@ -351,6 +388,9 @@
         DOM.views[key].classList.toggle('active', key === viewKey);
       }
     });
+    if (DOM.chatToggleBtn) {
+      DOM.chatToggleBtn.style.display = (viewKey !== 'lobby' && currentRoomId) ? 'flex' : 'none';
+    }
     updateCoinsDisplay();
   }
 
@@ -452,6 +492,7 @@
     State.isCreator = true;
     State.botPrivateData = {};
     payoutProcessedForMatch = null;
+    GuerraChat.init(roomId);
 
     if (!db) {
       isSinglePlayerMode = true;
@@ -531,6 +572,7 @@
         currentRoomRef = roomRef;
         State.myUid = uid;
         State.isCreator = (room.creatorId === uid);
+        GuerraChat.init(cleanCode);
         attachRoomListeners(roomRef, uid);
         return cleanCode;
       }
@@ -568,12 +610,14 @@
     State.myUid = uid;
     State.isCreator = (room.creatorId === uid);
     payoutProcessedForMatch = null;
+    GuerraChat.init(cleanCode);
 
     attachRoomListeners(roomRef, uid);
     return cleanCode;
   }
 
   function createLocalRoomState(roomId, uid, name, bet = 100) {
+    GuerraChat.init(roomId);
     return {
       id: roomId,
       creatorId: uid,
@@ -681,7 +725,7 @@
           return scoreB - scoreA;
         });
         const chosenFaceUp = [selectable6[0], selectable6[1], selectable6[2]];
-        const privateHand = [selectable6[3], selectable6[4], selectable6[5]];
+        const privateHand = sortCardsAscending([selectable6[3], selectable6[4], selectable6[5]]);
 
         finalPlayers[pid].faceUp = chosenFaceUp;
         finalPlayers[pid].handCount = 3;
@@ -705,7 +749,7 @@
         privateUpdates[`guerra_private/${currentRoomId}/${pid}`] = {
           hand: [],
           faceDown: faceDown,
-          selectable6: selectable6
+          selectable6: sortCardsAscending(selectable6)
         };
       }
     });
@@ -767,7 +811,7 @@
     singlePlayerState.privateData = {};
 
     const humanFaceDown = [deck.pop(), deck.pop(), deck.pop()];
-    const humanSelectable = [deck.pop(), deck.pop(), deck.pop(), deck.pop(), deck.pop(), deck.pop()];
+    const humanSelectable = sortCardsAscending([deck.pop(), deck.pop(), deck.pop(), deck.pop(), deck.pop(), deck.pop()]);
     singlePlayerState.privateData[uid] = {
       faceDown: humanFaceDown,
       selectable6: humanSelectable,
@@ -784,7 +828,7 @@
         return sb - sa;
       });
       const botFaceUp = [bot6[0], bot6[1], bot6[2]];
-      const botHand = [bot6[3], bot6[4], bot6[5]];
+      const botHand = sortCardsAscending([bot6[3], bot6[4], bot6[5]]);
 
       singlePlayerState.players[bid] = {
         id: bid,
@@ -877,7 +921,7 @@
     if (isSinglePlayerMode) {
       const pData = singlePlayerState.privateData[myUid];
       const all6 = pData.selectable6 || [];
-      const privateHand = all6.filter(c => !chosenFaceUp.some(cf => cf.id === c.id));
+      const privateHand = sortCardsAscending(all6.filter(c => !chosenFaceUp.some(cf => cf.id === c.id)));
 
       pData.hand = privateHand;
       delete pData.selectable6;
@@ -895,7 +939,7 @@
 
     // Multiplayer Firebase Flow
     const all6 = State.myPrivateCards.selectable6 || [];
-    const privateHand = all6.filter(c => !chosenFaceUp.some(cf => cf.id === c.id));
+    const privateHand = sortCardsAscending(all6.filter(c => !chosenFaceUp.some(cf => cf.id === c.id)));
 
     const db = global.FirebaseService.getDb();
     await db.ref(`guerra_private/${currentRoomId}/${myUid}`).set({
@@ -1035,6 +1079,7 @@
         privateInfo.hand.push(drawn);
       }
     }
+    privateInfo.hand = sortCardsAscending(privateInfo.hand || []);
 
     // Check Special Rules & Burns
     let newPile = [...(room.pile || []), ...playedCards];
@@ -1188,7 +1233,7 @@
     const cardsToAdd = [...(room.pile || [])];
     if (extraFailedCard) cardsToAdd.push(extraFailedCard);
 
-    privateInfo.hand = [...(privateInfo.hand || []), ...cardsToAdd];
+    privateInfo.hand = sortCardsAscending([...(privateInfo.hand || []), ...cardsToAdd]);
     player.handCount = privateInfo.hand.length;
 
     const newPile = [];
@@ -1448,6 +1493,9 @@
 
     // Render My Player Area (Bottom / Sur)
     const myPrivate = isSinglePlayerMode ? singlePlayerState.privateData[myUid] : State.myPrivateCards;
+    if (myPrivate && myPrivate.hand) {
+      myPrivate.hand = sortCardsAscending(myPrivate.hand);
+    }
     const myPublic = players[myUid] || {};
     const myHand = (myPrivate && myPrivate.hand) || [];
     const myFaceUp = myPublic.faceUp || [];
@@ -1624,9 +1672,9 @@
     currentPrivateRef.on('value', snap => {
       const data = snap.val() || {};
       State.myPrivateCards = {
-        hand: data.hand || [],
+        hand: sortCardsAscending(data.hand || []),
         faceDown: data.faceDown || [],
-        selectable6: data.selectable6 || []
+        selectable6: sortCardsAscending(data.selectable6 || [])
       };
       if (State.room && State.room.status === 'SETUP') {
         renderSetupView(State.room, myUid);
@@ -1699,7 +1747,281 @@
     showView('waiting');
   }
 
+  // --- REALTIME GUERRA CHAT MODULE ---
+  const GuerraChat = (function () {
+    let isOpen = false;
+    let unreadCount = 0;
+    let messages = [];
+    let chatRef = null;
+    let localRoomId = null;
+
+    function init(roomId) {
+      cleanup();
+      localRoomId = roomId;
+      unreadCount = 0;
+      messages = [];
+      updateUnreadBadges();
+      renderMessages();
+
+      if (DOM.chatToggleBtn) DOM.chatToggleBtn.style.display = 'flex';
+
+      if (!isSinglePlayerMode) {
+        const db = global.FirebaseService ? global.FirebaseService.getDb() : null;
+        if (db && roomId) {
+          chatRef = db.ref(`guerra_rooms/${roomId}/messages`);
+          chatRef.limitToLast(50).on('child_added', snap => {
+            const msg = snap.val();
+            if (!msg || !msg.id) return;
+            if (!messages.some(m => m.id === msg.id)) {
+              messages.push(msg);
+              handleIncomingMessage(msg);
+            }
+          });
+        }
+      }
+    }
+
+    function cleanup() {
+      if (chatRef) {
+        chatRef.off();
+        chatRef = null;
+      }
+      localRoomId = null;
+      messages = [];
+      unreadCount = 0;
+      close();
+      if (DOM.chatToggleBtn) DOM.chatToggleBtn.style.display = 'none';
+      updateUnreadBadges();
+    }
+
+    function open() {
+      isOpen = true;
+      unreadCount = 0;
+      updateUnreadBadges();
+      if (DOM.chatOverlay) DOM.chatOverlay.style.display = 'flex';
+      renderMessages();
+      if (DOM.chatInput) DOM.chatInput.focus();
+    }
+
+    function close() {
+      isOpen = false;
+      if (DOM.chatOverlay) DOM.chatOverlay.style.display = 'none';
+    }
+
+    function toggle() {
+      if (isOpen) close();
+      else open();
+    }
+
+    function updateUnreadBadges() {
+      const show = unreadCount > 0;
+      if (DOM.chatUnreadBadge) {
+        DOM.chatUnreadBadge.textContent = unreadCount > 9 ? '9+' : unreadCount;
+        DOM.chatUnreadBadge.style.display = show ? 'inline-flex' : 'none';
+      }
+      if (DOM.waitingChatBadge) {
+        DOM.waitingChatBadge.style.display = show ? 'block' : 'none';
+      }
+      if (DOM.gameChatBadge) {
+        DOM.gameChatBadge.style.display = show ? 'block' : 'none';
+      }
+    }
+
+    function sendMessage(text, type = 'text') {
+      if (!text || !text.trim()) return;
+      const cleanText = text.trim().substring(0, 120);
+      const myUid = State.myUid;
+      const myName = getPlayerName();
+
+      const msgObj = {
+        id: 'msg_' + Date.now() + '_' + Math.random().toString(36).substr(2, 6),
+        senderUid: myUid,
+        senderName: myName,
+        text: cleanText,
+        timestamp: Date.now(),
+        isAI: false,
+        type: type
+      };
+
+      if (!isSinglePlayerMode && chatRef) {
+        chatRef.push(msgObj).catch(err => console.warn('Chat send error:', err));
+      } else {
+        messages.push(msgObj);
+        handleIncomingMessage(msgObj);
+        triggerBotReaction(cleanText);
+      }
+
+      if (DOM.chatInput) DOM.chatInput.value = '';
+    }
+
+    function handleIncomingMessage(msg) {
+      CardAudio.chat();
+      renderMessages();
+
+      if (!isOpen) {
+        unreadCount++;
+        updateUnreadBadges();
+      }
+
+      showSeatSpeechBubble(msg.senderUid, msg.text, msg.isAI);
+    }
+
+    function renderMessages() {
+      if (!DOM.chatMessagesContainer) return;
+      if (messages.length === 0) {
+        DOM.chatMessagesContainer.innerHTML = `
+          <div class="chat-empty-hint">
+            <span style="font-size: 24px;">🃏</span>
+            <span>¡Saluda a los jugadores o usa los mensajes rápidos!</span>
+          </div>
+        `;
+        return;
+      }
+
+      const myUid = State.myUid;
+      DOM.chatMessagesContainer.innerHTML = messages.map(msg => {
+        const isMe = msg.senderUid === myUid;
+        const isBot = msg.isAI;
+        const isEmojiOnly = /^\p{Emoji}+$/u.test(msg.text.trim()) && msg.text.trim().length <= 6;
+        const timeStr = new Date(msg.timestamp || Date.now()).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+
+        return `
+          <div class="chat-msg-row ${isMe ? 'is-me' : isBot ? 'is-bot' : 'is-rival'} ${isEmojiOnly ? 'emoji-only' : ''}">
+            <span class="chat-sender-name">${isMe ? 'Tú' : escapeHTML(msg.senderName || 'Jugador')}</span>
+            <div class="chat-bubble">
+              ${escapeHTML(msg.text)}
+            </div>
+            <span class="chat-timestamp">${timeStr}</span>
+          </div>
+        `;
+      }).join('');
+
+      DOM.chatMessagesContainer.scrollTop = DOM.chatMessagesContainer.scrollHeight;
+    }
+
+    function escapeHTML(str) {
+      return (str || '').replace(/[&<>'"]/g, tag => ({
+        '&': '&amp;',
+        '<': '&lt;',
+        '>': '&gt;',
+        "'": '&#39;',
+        '"': '&quot;'
+      }[tag] || tag));
+    }
+
+    function showSeatSpeechBubble(senderUid, text, isBot = false) {
+      let seatEl = null;
+      if (senderUid === State.myUid) {
+        seatEl = DOM.seatBottom;
+      } else {
+        const room = isSinglePlayerMode ? singlePlayerState : State.room;
+        if (room && room.turnOrder) {
+          const myIndex = room.turnOrder.indexOf(State.myUid);
+          const total = room.turnOrder.length;
+          let sMap = { top: null, left: null, right: null };
+          if (total === 4) {
+            sMap.left = room.turnOrder[(myIndex + 1) % 4];
+            sMap.top = room.turnOrder[(myIndex + 2) % 4];
+            sMap.right = room.turnOrder[(myIndex + 3) % 4];
+          } else if (total === 3) {
+            sMap.left = room.turnOrder[(myIndex + 1) % 3];
+            sMap.right = room.turnOrder[(myIndex + 2) % 3];
+          } else if (total === 2) {
+            sMap.top = room.turnOrder[(myIndex + 1) % 2];
+          }
+
+          if (sMap.top === senderUid) seatEl = DOM.seatTop;
+          else if (sMap.left === senderUid) seatEl = DOM.seatLeft;
+          else if (sMap.right === senderUid) seatEl = DOM.seatRight;
+        }
+      }
+
+      if (!seatEl) return;
+
+      const existing = seatEl.querySelector('.seat-speech-bubble');
+      if (existing) existing.remove();
+
+      const bubble = document.createElement('div');
+      bubble.className = `seat-speech-bubble ${isBot ? 'bot-bubble' : ''}`;
+      bubble.textContent = text.length > 25 ? text.substring(0, 22) + '...' : text;
+      seatEl.style.position = 'relative';
+      seatEl.appendChild(bubble);
+
+      setTimeout(() => {
+        bubble.style.transition = 'opacity 0.4s, transform 0.4s';
+        bubble.style.opacity = '0';
+        bubble.style.transform = 'translateX(-50%) translateY(-10px)';
+        setTimeout(() => bubble.remove(), 400);
+      }, 3500);
+    }
+
+    function triggerBotReaction(userText) {
+      if (!isSinglePlayerMode) return;
+      const botNames = ['Bot Alfa 🤖', 'Bot Beta 🤖', 'Bot Gamma 🤖'];
+      const botUids = ['bot_1', 'bot_2', 'bot_3'];
+      const randomIdx = Math.floor(Math.random() * 3);
+      const chosenBotUid = botUids[randomIdx];
+      const chosenBotName = botNames[randomIdx];
+
+      let reply = null;
+      const lower = userText.toLowerCase();
+
+      if (lower.includes('mejor') || lower.includes('ganar')) {
+        const replies = ['¡Aún no has ganado! 😉', '¡Ya veremos quién ríe al final! 😂', '¡La suerte puede cambiar! 🃏', '👑 ¿Seguro? ¡Mira mis cartas!'];
+        reply = replies[Math.floor(Math.random() * replies.length)];
+      } else if (lower.includes('buena') || lower.includes('jugada')) {
+        const replies = ['¡Gracias! 👏', '¡Esa estuvo bien calculada! 😎', 'Hago lo que puedo 🤖', '¡Tú también juegas bien! 👍'];
+        reply = replies[Math.floor(Math.random() * replies.length)];
+      } else if (lower.includes('mala suerte') || lower.includes('suerte')) {
+        const replies = ['A cualquiera le pasa 😅', '¡Así es la Guerra! 🔥', 'El montón no perdona 📥', '¡Ánimo! 💪'];
+        reply = replies[Math.floor(Math.random() * replies.length)];
+      } else if (lower.includes('jaja') || lower.includes('😂')) {
+        const replies = ['😂😂😂', '¡Qué risa! 🤣', 'No te confíes 😜', '👀'];
+        reply = replies[Math.floor(Math.random() * replies.length)];
+      } else if (lower.includes('hola') || lower.includes('saludos')) {
+        const replies = ['¡Hola! ¡A jugar con todo! ⚔️', '¡Buena suerte a todos! 🃏', '¡Hola humano! 🤖'];
+        reply = replies[Math.floor(Math.random() * replies.length)];
+      } else if (lower.includes('te toca') || lower.includes('rapido')) {
+        const replies = ['¡Ya voy, ya voy! ⏱️', 'Analizando jugada óptima... 🧠', '¡Tranquilo! 🧘'];
+        reply = replies[Math.floor(Math.random() * replies.length)];
+      } else if (lower.includes('gg') || lower.includes('partida')) {
+        const replies = ['¡Bien jugado! 🤝', '¡GG! 🏆', '¡Excelente partida! 👏'];
+        reply = replies[Math.floor(Math.random() * replies.length)];
+      } else {
+        const generic = ['😎', '🤔', '🔥', '¡Buena jugada!', '👀', '¡Vamos con todo! 🃏'];
+        reply = generic[Math.floor(Math.random() * generic.length)];
+      }
+
+      const delay = 1200 + Math.floor(Math.random() * 1500);
+      setTimeout(() => {
+        if (!isSinglePlayerMode) return;
+        const botMsg = {
+          id: 'msg_bot_' + Date.now() + '_' + Math.random().toString(36).substr(2, 6),
+          senderUid: chosenBotUid,
+          senderName: chosenBotName,
+          text: reply,
+          timestamp: Date.now(),
+          isAI: true,
+          type: 'text'
+        };
+        messages.push(botMsg);
+        handleIncomingMessage(botMsg);
+      }, delay);
+    }
+
+    return {
+      init,
+      cleanup,
+      open,
+      close,
+      toggle,
+      sendMessage,
+      showSeatSpeechBubble
+    };
+  })();
+
   function leaveRoom() {
+    GuerraChat.cleanup();
     if (currentRoomRef && currentRoomId) {
       const myUid = State.myUid;
       try {
@@ -1835,6 +2157,41 @@
         }
       });
     }
+
+    // Guerra Chat Event Handlers
+    if (DOM.chatToggleBtn) DOM.chatToggleBtn.addEventListener('click', GuerraChat.toggle);
+    if (DOM.btnWaitingChat) DOM.btnWaitingChat.addEventListener('click', GuerraChat.open);
+    if (DOM.btnGameChat) DOM.btnGameChat.addEventListener('click', GuerraChat.open);
+    if (DOM.chatCloseBtn) DOM.chatCloseBtn.addEventListener('click', GuerraChat.close);
+
+    if (DOM.chatOverlay) {
+      DOM.chatOverlay.addEventListener('click', (e) => {
+        if (e.target === DOM.chatOverlay) GuerraChat.close();
+      });
+    }
+
+    if (DOM.chatForm) {
+      DOM.chatForm.addEventListener('submit', (e) => {
+        e.preventDefault();
+        if (DOM.chatInput) {
+          GuerraChat.sendMessage(DOM.chatInput.value, 'text');
+        }
+      });
+    }
+
+    document.querySelectorAll('.chat-preset-chip').forEach(chip => {
+      chip.addEventListener('click', () => {
+        const text = chip.dataset.msg;
+        if (text) GuerraChat.sendMessage(text, 'preset');
+      });
+    });
+
+    document.querySelectorAll('.chat-emoji-btn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const emoji = btn.dataset.emoji;
+        if (emoji) GuerraChat.sendMessage(emoji, 'emoji');
+      });
+    });
   }
 
   function init() {
@@ -1851,7 +2208,9 @@
     showView,
     getPlayerCoins,
     setPlayerCoins,
-    addPlayerCoins
+    addPlayerCoins,
+    chat: GuerraChat,
+    sortCardsAscending
   };
 
   if (typeof module !== 'undefined' && module.exports) {
@@ -1860,4 +2219,4 @@
     global.GuerraGame = GuerraGame;
   }
 
-})(typeof window !== 'undefined' ? window : self);
+})(typeof window !== 'undefined' ? window : (typeof global !== 'undefined' ? global : self));

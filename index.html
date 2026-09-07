@@ -734,13 +734,17 @@
         <div class="glass-card">
           <div style="display: flex; justify-content: space-between; align-items: center;">
             <h2 class="card-title"><span>🃏</span> Salón de Guerra</h2>
-            <div style="display: flex; gap: 6px;">
+            <div style="display: flex; gap: 6px; align-items: center;">
               <span id="guerra-waiting-bet-badge" class="difficulty-badge" style="background: rgba(245, 158, 11, 0.2); color: var(--accent-amber); border: 1px solid var(--accent-amber);">
                 🪙 Apuesta: 100
               </span>
               <span id="guerra-waiting-players-count" class="difficulty-badge" style="background: rgba(245, 158, 11, 0.2); color: var(--accent-amber); border: 1px solid var(--accent-amber);">
                 1 / 4 Jugadores
               </span>
+              <button id="guerra-btn-waiting-chat" class="icon-btn" style="width: 28px; height: 28px; font-size: 13px; position: relative; border-color: var(--primary); color: var(--primary);" title="Abrir Chat">
+                💬
+                <span id="guerra-waiting-chat-badge" class="chat-badge-mini" style="display: none;"></span>
+              </button>
             </div>
           </div>
 
@@ -831,6 +835,10 @@
               <span id="guerra-deck-count" class="difficulty-badge" style="background: rgba(148, 163, 184, 0.15); color: var(--text-main);">
                 52 cartas
               </span>
+              <button id="guerra-btn-game-chat" class="icon-btn" style="width: 32px; height: 32px; font-size: 14px; position: relative; border-color: var(--primary); color: var(--primary);" title="Abrir Chat de la Mesa">
+                💬
+                <span id="guerra-game-chat-badge" class="chat-badge-mini" style="display: none;"></span>
+              </button>
               <button id="guerra-btn-game-rules" class="icon-btn" style="width: 32px; height: 32px; font-size: 14px; border-color: var(--accent-amber); color: var(--accent-amber);" title="Ver Reglas">📖</button>
             </div>
           </div>
@@ -899,12 +907,12 @@
           <div id="guerra-seat-bottom" class="guerra-player-area glass-card" style="padding: 12px; gap: 8px;">
             
             <div style="display: flex; justify-content: space-between; align-items: center;">
-              <span style="font-size: 12px; font-weight: 800; color: var(--accent-cyan); text-transform: uppercase;">
-                Tus Cartas en Mesa (Boca Abajo / Arriba)
-              </span>
-              <button id="guerra-btn-pickup-pile" class="btn" style="padding: 4px 10px; font-size: 12px; background: rgba(239, 68, 68, 0.15); color: var(--accent-rose); border-color: var(--accent-rose);" disabled>
-                📥 Recoger Montón
+              <button id="guerra-btn-pickup-pile" class="btn-danger-pickup" disabled title="Recoger todas las cartas del montón central a tu mano">
+                <span>📥</span> Recoger Montón
               </button>
+              <span style="font-size: 12px; font-weight: 800; color: var(--accent-cyan); text-transform: uppercase;">
+                Tus Cartas en Mesa
+              </span>
             </div>
 
             <!-- My 3 Table Slots -->
@@ -960,11 +968,6 @@
               </table>
             </div>
           </div>
-                  <!-- Rankings rendered dynamically -->
-                </tbody>
-              </table>
-            </div>
-          </div>
 
           <div class="btn-group" style="margin-top: 12px;">
             <button id="guerra-btn-play-again" class="btn btn-emerald" style="flex: 1.2;">
@@ -977,6 +980,72 @@
         </div>
 
       </section>
+
+      <!-- GUERRA FLOATING CHAT BUTTON -->
+      <button id="guerra-chat-toggle-btn" class="guerra-chat-toggle" style="display: none;" title="Abrir Chat de Guerra">
+        <span style="font-size: 18px;">💬</span>
+        <span>Chat</span>
+        <span id="guerra-chat-unread-badge" class="chat-unread-badge" style="display: none;">0</span>
+      </button>
+
+      <!-- GUERRA CHAT MODAL / DRAWER -->
+      <div id="guerra-chat-overlay" class="guerra-chat-overlay" style="display: none;">
+        <div class="guerra-chat-card glass-card">
+          <div class="guerra-chat-header">
+            <div style="display: flex; align-items: center; gap: 8px;">
+              <span style="font-size: 20px;">💬</span>
+              <h3 style="margin: 0; font-size: 16px; font-weight: 800; color: #fff;">Chat de Guerra</h3>
+              <span class="difficulty-badge" style="font-size: 10px; padding: 2px 6px; background: rgba(16, 185, 129, 0.2); color: var(--accent-emerald);">En vivo</span>
+            </div>
+            <button id="guerra-chat-close-btn" class="icon-btn" style="width: 30px; height: 30px; font-size: 13px;" title="Cerrar Chat">✕</button>
+          </div>
+
+          <!-- Chat Messages Container -->
+          <div id="guerra-chat-messages" class="guerra-chat-messages-container">
+            <div class="chat-empty-hint">
+              <span style="font-size: 24px;">🃏</span>
+              <span>¡Saluda a los jugadores o usa los mensajes rápidos!</span>
+            </div>
+          </div>
+
+          <!-- Preset Quick Messages Carousel / Chips -->
+          <div class="guerra-chat-presets-container">
+            <div class="chat-presets-scroll">
+              <button class="chat-preset-chip" data-msg="👏 ¡Buena jugada!">👏 ¡Buena jugada!</button>
+              <button class="chat-preset-chip" data-msg="👑 ¡Soy el mejor!">👑 ¡Soy el mejor!</button>
+              <button class="chat-preset-chip" data-msg="🔥 ¡Qué mala suerte!">🔥 ¡Qué mala suerte!</button>
+              <button class="chat-preset-chip" data-msg="😂 Jajaja">😂 Jajaja</button>
+              <button class="chat-preset-chip" data-msg="⚡ ¡Te toca!">⚡ ¡Te toca!</button>
+              <button class="chat-preset-chip" data-msg="🤔 Pensando...">🤔 Pensando...</button>
+              <button class="chat-preset-chip" data-msg="😱 ¡No te lo creo!">😱 ¡No te lo creo!</button>
+              <button class="chat-preset-chip" data-msg="👋 ¡Hola a todos!">👋 ¡Hola a todos!</button>
+              <button class="chat-preset-chip" data-msg="gg ¡Buena partida!">gg ¡Buena partida!</button>
+            </div>
+          </div>
+
+          <!-- Quick Emojis Bar -->
+          <div class="guerra-chat-emojis-bar">
+            <button class="chat-emoji-btn" data-emoji="😂" title="Risa">😂</button>
+            <button class="chat-emoji-btn" data-emoji="🔥" title="Fuego">🔥</button>
+            <button class="chat-emoji-btn" data-emoji="👑" title="Corona">👑</button>
+            <button class="chat-emoji-btn" data-emoji="👏" title="Aplauso">👏</button>
+            <button class="chat-emoji-btn" data-emoji="😎" title="Genial">😎</button>
+            <button class="chat-emoji-btn" data-emoji="😱" title="Sorpresa">😱</button>
+            <button class="chat-emoji-btn" data-emoji="🃏" title="Carta">🃏</button>
+            <button class="chat-emoji-btn" data-emoji="💀" title="Calavera">💀</button>
+            <button class="chat-emoji-btn" data-emoji="💩" title="Caca">💩</button>
+            <button class="chat-emoji-btn" data-emoji="🪙" title="Moneda">🪙</button>
+          </div>
+
+          <!-- Chat Input Row -->
+          <form id="guerra-chat-form" class="guerra-chat-input-row" onsubmit="return false;">
+            <input type="text" id="guerra-chat-input" class="text-input" placeholder="Escribe un mensaje..." maxlength="120" autocomplete="off">
+            <button type="submit" id="guerra-chat-send-btn" class="btn btn-primary" style="padding: 10px 14px; font-size: 14px; white-space: nowrap;">
+              <span>✈️</span>
+            </button>
+          </form>
+        </div>
+      </div>
 
     </div>
 

@@ -21,6 +21,11 @@
       }
     },
 
+    "guerra_public_rooms": {
+      ".read": "auth != null",
+      ".write": "auth != null"
+    },
+
     "guerra_private": {
       "$roomId": {
         "$uid": {

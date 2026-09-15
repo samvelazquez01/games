@@ -101,6 +101,12 @@
       firebaseAuth = global.firebase.auth();
       firebaseDb = global.firebase.database();
 
+      if (firebaseAuth && !firebaseAuth.currentUser) {
+        firebaseAuth.signInAnonymously().catch(err => {
+          console.warn('Fallo signInAnonymously automático en initFirebase:', err);
+        });
+      }
+
       return {
         initialized: true,
         app: firebaseApp,

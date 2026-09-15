@@ -2346,5 +2346,125 @@ body {
   box-shadow: 0 6px 18px rgba(16, 185, 129, 0.6);
 }
 
+/* Guerra Public Rooms List & Cards */
+.guerra-create-buttons-row {
+  display: flex;
+  gap: 10px;
+  width: 100%;
+}
 
+.guerra-public-rooms-container {
+  background: rgba(15, 23, 42, 0.5);
+  border: 1px solid rgba(245, 158, 11, 0.2);
+  border-radius: var(--radius-md);
+  padding: 12px;
+  margin-top: 4px;
+}
 
+.public-rooms-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-height: 220px;
+  overflow-y: auto;
+  padding-right: 4px;
+}
+
+.public-room-card {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  background: rgba(30, 41, 59, 0.7);
+  border: 1px solid rgba(245, 158, 11, 0.25);
+  border-radius: var(--radius-sm);
+  padding: 10px 14px;
+  transition: all 0.2s ease;
+}
+
+.public-room-card:hover {
+  border-color: var(--accent-amber);
+  background: rgba(30, 41, 59, 0.95);
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+}
+
+.public-room-info {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.public-room-host {
+  font-weight: 800;
+  font-size: 14px;
+  color: var(--text-main);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.public-room-meta {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 12px;
+}
+
+.public-room-bet {
+  color: var(--accent-amber);
+  font-weight: 800;
+  display: flex;
+  align-items: center;
+  gap: 3px;
+}
+
+.public-room-players {
+  color: var(--text-muted);
+  font-size: 11px;
+}
+
+.public-room-btn-join {
+  background: linear-gradient(135deg, #10b981, #059669);
+  color: #fff;
+  border: none;
+  border-radius: var(--radius-sm);
+  padding: 7px 14px;
+  font-size: 12px;
+  font-weight: 800;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  white-space: nowrap;
+}
+
+.public-room-btn-join:hover {
+  filter: brightness(1.15);
+  transform: scale(1.04);
+}
+
+.public-rooms-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 20px 10px;
+  text-align: center;
+  color: var(--text-muted);
+  font-size: 12px;
+  gap: 6px;
+}
+
+#guerra-bet-selector {
+  display: grid !important;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 6px;
+  width: 100%;
+}
+
+#guerra-bet-selector .btn-toggle-option {
+  padding: 8px 4px;
+  font-size: 12px;
+  font-weight: 700;
+  text-align: center;
+  white-space: nowrap;
+}

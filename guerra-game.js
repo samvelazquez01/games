@@ -54,6 +54,30 @@
   }
 
   const awardedPayouts = {};
+  const paidMatches = {};
+
+  function escapeHTML(str) {
+    return String(str || '').replace(/[&<>'"]/g, tag => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;' }[tag] || tag));
+  }
+
+  function ensureBetDeducted(room) {
+    if (!room) return;
+    const matchId = room.matchId || room.id;
+    if (!matchId) return;
+    if (room.status !== 'SETUP' && room.status !== 'PLAYING') return;
+    if (paidMatches[matchId]) return; // Already deducted for this match
+
+    const myUid = State.myUid;
+    const myPlayer = room.players && room.players[myUid];
+    if (!myPlayer) return;
+
+    paidMatches[matchId] = true;
+    const bet = room.betAmount || 100;
+    addPlayerCoins(-bet);
+    CardAudio.coin();
+    showToast(`Apuesta de ${bet} 🪙 descontada para esta partida. ¡Buena suerte!`, '🪙');
+    updateCoinsDisplay();
+  }
 
   function calculatePrizeForPlace(place, totalPlayers, bet) {
     const pCount = totalPlayers || 4;
@@ -71,7 +95,7 @@
 
   function awardPrizeIfEligible(playerUid, place, room) {
     if (playerUid !== State.myUid) return 0;
-    const matchId = (room && room.id) || currentRoomId || 'match';
+    const matchId = (room && (room.matchId || room.id)) || currentRoomId || 'match';
     const matchKey = `${matchId}_place_${place}`;
     if (awardedPayouts[matchKey]) return 0;
     awardedPayouts[matchKey] = true;
@@ -94,19 +118,15 @@
   }
 
   function claimFreeCoinsBonus() {
-    if (isBonusClaimed()) {
-      showToast('Ya has reclamado tu bono único de 500 monedas.', '⚠️');
-      return;
-    }
     const current = getPlayerCoins();
-    if (current >= 100) {
-      showToast(`Tienes saldo suficiente (${current} 🪙). El bono único estará disponible si te quedas sin monedas.`, 'ℹ️');
+    if (current >= 1000) {
+      showToast(`Tienes saldo suficiente (${current.toLocaleString()} 🪙). La recarga estará disponible si bajas de 1,000 monedas.`, 'ℹ️');
       return;
     }
-    localStorage.setItem(BONUS_CLAIMED_KEY, 'true');
-    addPlayerCoins(500);
+    const bonusAmount = 5000;
+    addPlayerCoins(bonusAmount);
     CardAudio.win();
-    showToast('¡Has reclamado tu bono ÚNICO de +500 Monedas! 🎁🪙', '🪙');
+    showToast(`¡Has recibido una recarga de +${bonusAmount.toLocaleString()} Monedas! 🎁🪙`, '🪙');
     updateCoinsDisplay();
   }
 
@@ -118,14 +138,12 @@
     }
     const btnRefill = document.getElementById('guerra-btn-refill-coins');
     if (btnRefill) {
-      if (isBonusClaimed()) {
-        btnRefill.style.opacity = '0.35';
-        btnRefill.style.cursor = 'not-allowed';
-        btnRefill.title = 'Bono de 500 monedas ya reclamado (Disponible solo una vez)';
+      if (coins >= 1000) {
+        btnRefill.style.opacity = '0.5';
+        btnRefill.title = `Saldo: ${coins.toLocaleString()} 🪙. Recarga de +5,000 disponible si bajas de 1,000 🪙.`;
       } else {
         btnRefill.style.opacity = '1';
-        btnRefill.style.cursor = 'pointer';
-        btnRefill.title = 'Reclamar bono único de 500 monedas si te quedas sin fondos';
+        btnRefill.title = 'Reclamar recarga de +5,000 🪙 para seguir jugando';
       }
     }
   }
@@ -409,6 +427,11 @@
 
     DOM.inputNickname = document.getElementById('guerra-nickname-input');
     DOM.btnCreateRoom = document.getElementById('guerra-btn-create-room');
+    DOM.btnCreatePublic = document.getElementById('guerra-btn-create-public');
+    DOM.btnCreatePrivate = document.getElementById('guerra-btn-create-private');
+    DOM.publicRoomsList = document.getElementById('guerra-public-rooms-list');
+    DOM.btnRefreshPublicRooms = document.getElementById('guerra-btn-refresh-public-rooms');
+    DOM.waitingPrivacyBadge = document.getElementById('guerra-waiting-privacy-badge');
     DOM.btnViewRules = document.getElementById('guerra-btn-view-rules');
     DOM.inputJoinCode = document.getElementById('guerra-input-join-code');
     DOM.btnJoinRoom = document.getElementById('guerra-btn-join-room');
@@ -474,6 +497,118 @@
     DOM.btnReturnMenu = document.getElementById('guerra-btn-return-menu');
   }
 
+  // --- FIREBASE AUTH HELPER ---
+  async function ensureFirebaseAuth() {
+    const service = global.FirebaseService;
+    if (!service || !service.isConfigured()) return null;
+    service.initFirebase();
+    const auth = service.getAuth();
+    if (auth && !auth.currentUser) {
+      try {
+        await auth.signInAnonymously();
+      } catch (err) {
+        console.warn('Fallo auth anónima en Guerra:', err);
+      }
+    }
+    return service.getDb();
+  }
+
+  // --- PUBLIC ROOMS DISCOVERY SYSTEM ---
+  let publicRoomsRef = null;
+
+  async function listenPublicRooms() {
+    const service = global.FirebaseService;
+    if (!service || !service.isConfigured()) {
+      renderPublicRoomsList({});
+      return;
+    }
+    try {
+      const db = await ensureFirebaseAuth();
+      if (!db) return;
+
+      if (publicRoomsRef) {
+        publicRoomsRef.off();
+      }
+
+      publicRoomsRef = db.ref('guerra_public_rooms');
+      publicRoomsRef.on('value', snap => {
+        const roomsMap = snap.val() || {};
+        renderPublicRoomsList(roomsMap);
+      }, err => {
+        console.warn('Error escuchando salas públicas:', err);
+      });
+    } catch (e) {
+      console.warn('Error inicializando salas públicas:', e);
+    }
+  }
+
+  function stopListeningPublicRooms() {
+    if (publicRoomsRef) {
+      publicRoomsRef.off();
+      publicRoomsRef = null;
+    }
+  }
+
+  function renderPublicRoomsList(roomsMap) {
+    if (!DOM.publicRoomsList) return;
+    const now = Date.now();
+    const list = Object.values(roomsMap || {}).filter(r => {
+      // Show waiting rooms created in the last 2 hours with available slots
+      return r && r.id && (r.status === 'WAITING' || !r.status) && (r.playerCount || 0) < 4;
+    });
+
+    if (list.length === 0) {
+      DOM.publicRoomsList.innerHTML = `
+        <div class="public-rooms-empty">
+          <span style="font-size: 26px; opacity: 0.8;">🃏</span>
+          <span style="font-weight: 600;">No hay salas públicas abiertas en este momento.</span>
+          <span style="font-size: 11px; color: var(--accent-amber);">¡Crea una sala pública para que otros se unan!</span>
+        </div>
+      `;
+      return;
+    }
+
+    DOM.publicRoomsList.innerHTML = list.map(room => {
+      const pCount = room.playerCount || 1;
+      const bet = room.betAmount || 100;
+      return `
+        <div class="public-room-card" data-room-id="${room.id}">
+          <div class="public-room-info">
+            <div class="public-room-host">
+              <span>👑</span>
+              <span>${escapeHTML(room.creatorName || 'Anfitrión')}</span>
+            </div>
+            <div class="public-room-meta">
+              <span class="public-room-bet">🪙 ${bet}</span>
+              <span class="public-room-players">👥 ${pCount}/4 Jugadores</span>
+            </div>
+          </div>
+          <button class="public-room-btn-join" data-room-id="${room.id}">
+            ENTRAR 🚀
+          </button>
+        </div>
+      `;
+    }).join('');
+
+    DOM.publicRoomsList.querySelectorAll('.public-room-btn-join').forEach(btn => {
+      btn.addEventListener('click', async (e) => {
+        e.stopPropagation();
+        const rid = btn.dataset.roomId;
+        if (!rid) return;
+        try {
+          btn.disabled = true;
+          btn.textContent = 'Entrando...';
+          await joinRoom(rid);
+          showToast(`¡Conectado a la sala pública ${rid}!`, '🚀');
+        } catch (err) {
+          btn.disabled = false;
+          btn.textContent = 'ENTRAR 🚀';
+          showToast(err.message || 'Error al unirse.', '❌');
+        }
+      });
+    });
+  }
+
   function showView(viewKey) {
     Object.keys(DOM.views).forEach(key => {
       if (DOM.views[key]) {
@@ -482,6 +617,11 @@
     });
     if (DOM.chatToggleBtn) {
       DOM.chatToggleBtn.style.display = (viewKey !== 'lobby' && currentRoomId) ? 'flex' : 'none';
+    }
+    if (viewKey === 'lobby') {
+      listenPublicRooms();
+    } else {
+      stopListeningPublicRooms();
     }
     updateCoinsDisplay();
   }
@@ -561,7 +701,7 @@
 
   // --- ROOM CREATION & INITIAL SETUP ---
 
-  async function createRoom() {
+  async function createRoom(isPublic = true) {
     const uid = getPlayerUid();
     const name = getPlayerName();
     const roomId = generateRoomCode();
@@ -575,8 +715,7 @@
     const service = global.FirebaseService;
     let db = null;
     if (service && service.isConfigured()) {
-      service.initFirebase();
-      db = service.getDb();
+      db = await ensureFirebaseAuth();
     }
 
     currentRoomId = roomId;
@@ -588,7 +727,7 @@
 
     if (!db) {
       isSinglePlayerMode = true;
-      singlePlayerState = createLocalRoomState(roomId, uid, name, bet);
+      singlePlayerState = createLocalRoomState(roomId, uid, name, bet, isPublic);
       renderWaitingRoom(singlePlayerState);
       return roomId;
     }
@@ -600,6 +739,7 @@
     const initialPayload = {
       id: roomId,
       creatorId: uid,
+      isPublic: !!isPublic,
       betAmount: bet,
       totalPot: bet,
       status: 'WAITING',
@@ -629,6 +769,25 @@
     };
 
     await roomRef.set(initialPayload);
+
+    if (isPublic) {
+      try {
+        const pubRef = db.ref('guerra_public_rooms/' + roomId);
+        await pubRef.set({
+          id: roomId,
+          creatorName: name,
+          creatorId: uid,
+          betAmount: bet,
+          playerCount: 1,
+          status: 'WAITING',
+          createdAt: global.firebase.database.ServerValue.TIMESTAMP
+        });
+        pubRef.onDisconnect().remove();
+      } catch (e) {
+        console.warn('Error publicando sala:', e);
+      }
+    }
+
     attachRoomListeners(roomRef, uid);
     return roomId;
   }
@@ -643,8 +802,10 @@
       throw new Error('Configura Firebase para unirte a salas multijugador.');
     }
 
-    service.initFirebase();
-    const db = service.getDb();
+    const db = await ensureFirebaseAuth();
+    if (!db) {
+      throw new Error('No se pudo conectar a la base de datos de Firebase.');
+    }
     const roomRef = db.ref('guerra_rooms/' + cleanCode);
     const snap = await roomRef.once('value');
     const room = snap.val();
@@ -697,6 +858,16 @@
     await roomRef.child(`players/${uid}`).set(playerPayload);
     await roomRef.child('turnOrder').set(turnOrder);
 
+    if (room.isPublic) {
+      try {
+        const pubRef = db.ref('guerra_public_rooms/' + cleanCode);
+        pubRef.update({
+          playerCount: count + 1,
+          status: (count + 1 >= 4) ? 'FULL' : 'WAITING'
+        }).catch(() => {});
+      } catch (e) {}
+    }
+
     currentRoomId = cleanCode;
     currentRoomRef = roomRef;
     State.myUid = uid;
@@ -708,11 +879,12 @@
     return cleanCode;
   }
 
-  function createLocalRoomState(roomId, uid, name, bet = 100) {
+  function createLocalRoomState(roomId, uid, name, bet = 100, isPublic = false) {
     GuerraChat.init(roomId);
     return {
       id: roomId,
       creatorId: uid,
+      isPublic: !!isPublic,
       betAmount: bet,
       totalPot: bet * 4,
       status: 'WAITING',
@@ -795,18 +967,23 @@
       }
     }
 
-    const totalPot = bet * turnOrder.length;
+    // 🎲 Completely randomize turn order and select initial starting player without preference
+    const shuffledTurnOrder = shuffle(turnOrder);
+    const randomStartIdx = Math.floor(Math.random() * shuffledTurnOrder.length);
+    const startingPlayerUid = shuffledTurnOrder[randomStartIdx];
 
-    // Deduct bet from human host
-    addPlayerCoins(-bet);
-    CardAudio.coin();
-    showToast(`Apuesta de ${bet} 🪙 realizada. ¡Bote total: ${totalPot} 🪙!`, '🪙');
+    const totalPot = bet * shuffledTurnOrder.length;
+    const matchId = `m_${currentRoomId}_${Date.now()}_${Math.random().toString(36).substr(2, 4)}`;
 
     const db = global.FirebaseService.getDb();
+    if (db) {
+      db.ref('guerra_public_rooms/' + currentRoomId).remove().catch(() => {});
+    }
+
     const privateUpdates = {};
     State.botPrivateData = {};
 
-    turnOrder.forEach(pid => {
+    shuffledTurnOrder.forEach(pid => {
       const faceDown = [deck.pop(), deck.pop(), deck.pop()];
       const selectable6 = [deck.pop(), deck.pop(), deck.pop(), deck.pop(), deck.pop(), deck.pop()];
 
@@ -854,14 +1031,19 @@
       console.warn('Private updates warning:', e);
     }
 
+    ensureBetDeducted({ matchId, betAmount: bet, status: 'SETUP', players: finalPlayers });
+
     await currentRoomRef.update({
+      matchId: matchId,
       status: 'SETUP',
       betAmount: bet,
       totalPot: totalPot,
       deckCount: deck.length,
       drawDeck: deck,
       players: finalPlayers,
-      turnOrder: turnOrder,
+      turnOrder: shuffledTurnOrder,
+      currentTurnIndex: randomStartIdx,
+      activePlayerUid: startingPlayerUid,
       winners: []
     });
   }
@@ -877,13 +1059,18 @@
     }
 
     const deck = createDeck();
-    const turnOrder = [uid, 'bot_1', 'bot_2', 'bot_3'];
+    const turnOrder = shuffle([uid, 'bot_1', 'bot_2', 'bot_3']);
+    const randomStartIdx = Math.floor(Math.random() * turnOrder.length);
+    const startingPlayerUid = turnOrder[randomStartIdx];
     const botNames = ['Bot Alfa 🤖', 'Bot Beta 🤖', 'Bot Gamma 🤖'];
     const totalPot = bet * 4;
+    const matchId = `m_local_${Date.now()}_${Math.random().toString(36).substr(2, 4)}`;
 
-    addPlayerCoins(-bet);
-    CardAudio.coin();
-    showToast(`Apuesta de ${bet} 🪙 realizada. ¡Bote total: ${totalPot} 🪙!`, '🪙');
+    singlePlayerState.matchId = matchId;
+    singlePlayerState.turnOrder = turnOrder;
+    singlePlayerState.currentTurnIndex = randomStartIdx;
+    singlePlayerState.activePlayerUid = startingPlayerUid;
+    ensureBetDeducted(singlePlayerState);
 
     singlePlayerState.players = {
       [uid]: {
@@ -1021,11 +1208,20 @@
       singlePlayerState.players[myUid].faceUp = chosenFaceUp;
       singlePlayerState.players[myUid].setupReady = true;
 
-      // Start Playing
+      // Start Playing immediately with random starting player
       singlePlayerState.status = 'PLAYING';
-      singlePlayerState.activePlayerUid = singlePlayerState.turnOrder[0];
-      singlePlayerState.currentTurnIndex = 0;
+      const tOrder = singlePlayerState.turnOrder || [myUid, 'bot_1', 'bot_2', 'bot_3'];
+      let randomIdx = singlePlayerState.currentTurnIndex;
+      if (randomIdx === undefined || randomIdx === null || !singlePlayerState.activePlayerUid) {
+        randomIdx = Math.floor(Math.random() * tOrder.length);
+      }
+      singlePlayerState.currentTurnIndex = randomIdx;
+      singlePlayerState.activePlayerUid = tOrder[randomIdx];
       renderGameTable(singlePlayerState, myUid);
+      showView('game');
+      checkAndTriggerAI(singlePlayerState);
+      const starterName = (singlePlayerState.players[tOrder[randomIdx]] && singlePlayerState.players[tOrder[randomIdx]].name) || 'Jugador';
+      showToast(`🎲 ¡Inicia la partida! Turno sorteado: ${starterName}`, '🎲');
       return;
     }
 
@@ -1033,34 +1229,114 @@
     const all6 = State.myPrivateCards.selectable6 || [];
     const privateHand = sortCardsAscending(all6.filter(c => !chosenFaceUp.some(cf => cf.id === c.id)));
 
-    const db = global.FirebaseService.getDb();
-    await db.ref(`guerra_private/${currentRoomId}/${myUid}`).set({
-      hand: privateHand,
-      faceDown: State.myPrivateCards.faceDown || []
-    });
+    // Update local state immediately so UI responds without waiting for network
+    State.myPrivateCards.hand = privateHand;
+    delete State.myPrivateCards.selectable6;
 
-    await currentRoomRef.child(`players/${myUid}`).update({
-      faceUp: chosenFaceUp,
-      setupReady: true
-    });
+    if (State.room && State.room.players && State.room.players[myUid]) {
+      State.room.players[myUid].faceUp = chosenFaceUp;
+      State.room.players[myUid].setupReady = true;
+    }
 
+    // Check if other players are AI, already setupReady, or abandoned/disconnected
+    const currentRoom = State.room || {};
+    const allPlayersList = Object.values(currentRoom.players || {});
+    const otherPlayers = allPlayersList.filter(p => p.id !== myUid);
+    const areOthersReady = otherPlayers.length === 0 || otherPlayers.every(p => p.isAI || p.setupReady || p.isAbandoned || p.connected === false);
+
+    if (areOthersReady) {
+      // IN A BOT GAME OR WHEN ALL OTHERS ARE READY: TRANSITION IMMEDIATELY!
+      if (DOM.setupWaitingNotice) DOM.setupWaitingNotice.style.display = 'none';
+      if (DOM.btnConfirmSetup) DOM.btnConfirmSetup.style.display = 'none';
+
+      const turnOrder = currentRoom.turnOrder || Object.keys(currentRoom.players || {});
+      let randomTurnIdx = currentRoom.currentTurnIndex;
+      if (randomTurnIdx === undefined || randomTurnIdx === null || !currentRoom.activePlayerUid) {
+        randomTurnIdx = Math.floor(Math.random() * turnOrder.length);
+      }
+      const firstTurnUid = currentRoom.activePlayerUid || turnOrder[randomTurnIdx] || turnOrder[0];
+
+      if (State.room) {
+        State.room.status = 'PLAYING';
+        State.room.activePlayerUid = firstTurnUid;
+        State.room.currentTurnIndex = randomTurnIdx;
+      }
+
+      renderGameTable(State.room, myUid);
+      showView('game');
+      checkAndTriggerAI(State.room);
+
+      const starter = (currentRoom.players && currentRoom.players[firstTurnUid]) || { name: 'Jugador' };
+      showToast(`🎲 ¡Inicia la partida! Turno sorteado: ${starter.name}`, '🎲');
+
+      // Persist to Firebase in background without blocking UI
+      try {
+        const db = global.FirebaseService.getDb();
+        if (db && currentRoomId) {
+          db.ref(`guerra_private/${currentRoomId}/${myUid}`).set({
+            hand: privateHand,
+            faceDown: State.myPrivateCards.faceDown || []
+          }).catch(err => console.warn('Private cards save warning:', err));
+        }
+
+        if (currentRoomRef) {
+          await currentRoomRef.update({
+            status: 'PLAYING',
+            activePlayerUid: firstTurnUid,
+            currentTurnIndex: randomTurnIdx,
+            [`players/${myUid}/faceUp`]: chosenFaceUp,
+            [`players/${myUid}/setupReady`]: true
+          });
+        }
+      } catch (err) {
+        console.warn('Error sincronizando PLAYING en Firebase:', err);
+      }
+      return;
+    }
+
+    // If there ARE other human players who have not confirmed yet:
     if (DOM.setupWaitingNotice) DOM.setupWaitingNotice.style.display = 'block';
     if (DOM.btnConfirmSetup) DOM.btnConfirmSetup.style.display = 'none';
 
-    // Host checks if all ready -> transition to PLAYING
-    if (State.isCreator) {
-      const snap = await currentRoomRef.once('value');
-      const r = snap.val();
-      const allPlayers = Object.values(r.players || {});
-      const allReady = allPlayers.every(p => p.setupReady);
-
-      if (allReady) {
-        await currentRoomRef.update({
-          status: 'PLAYING',
-          activePlayerUid: r.turnOrder[0],
-          currentTurnIndex: 0
-        });
+    try {
+      const db = global.FirebaseService.getDb();
+      if (db && currentRoomId) {
+        db.ref(`guerra_private/${currentRoomId}/${myUid}`).set({
+          hand: privateHand,
+          faceDown: State.myPrivateCards.faceDown || []
+        }).catch(err => console.warn('Private cards save warning:', err));
       }
+
+      if (currentRoomRef) {
+        await currentRoomRef.child(`players/${myUid}`).update({
+          faceUp: chosenFaceUp,
+          setupReady: true
+        });
+
+        // Double-check room status in case other human finished simultaneously
+        const snap = await currentRoomRef.once('value');
+        const r = snap.val();
+        if (r && r.status === 'SETUP') {
+          const playersObj = r.players || {};
+          const allP = Object.values(playersObj);
+          const allReady = allP.length > 0 && allP.every(p => p.id === myUid || p.isAI || p.setupReady || p.isAbandoned || p.connected === false);
+          if (allReady) {
+            const tOrder = r.turnOrder || Object.keys(playersObj);
+            let rIdx = r.currentTurnIndex;
+            if (rIdx === undefined || rIdx === null || !r.activePlayerUid) {
+              rIdx = Math.floor(Math.random() * tOrder.length);
+            }
+            const firstTurn = r.activePlayerUid || tOrder[rIdx] || tOrder[0];
+            await currentRoomRef.update({
+              status: 'PLAYING',
+              activePlayerUid: firstTurn,
+              currentTurnIndex: rIdx
+            });
+          }
+        }
+      }
+    } catch (err) {
+      console.warn('Error en confirmSetup multijugador:', err);
     }
   }
 
@@ -1406,6 +1682,158 @@
 
   // --- RESILIENT SMART AI BOT ENGINE ---
 
+  function getNextActiveOpponent(room, currentUid) {
+    const turnOrder = room.turnOrder || Object.keys(room.players || {});
+    const myIndex = turnOrder.indexOf(currentUid);
+    if (myIndex === -1) return null;
+    let idx = (myIndex + 1) % turnOrder.length;
+    for (let i = 0; i < turnOrder.length; i++) {
+      const candidate = turnOrder[idx];
+      const p = room.players[candidate];
+      if (candidate !== currentUid && p && !p.isFinished && !p.isAbandoned && p.connected !== false) {
+        return p;
+      }
+      idx = (idx + 1) % turnOrder.length;
+    }
+    return null;
+  }
+
+  function evaluateOpponentThreat(player) {
+    if (!player || player.isFinished) return 0;
+    const handCount = player.handCount || 0;
+    const faceUpCount = (player.faceUp && player.faceUp.length) || 0;
+    const faceDownCount = player.faceDownCount || 0;
+    const total = handCount + faceUpCount + faceDownCount;
+
+    if (total <= 1) return 3; // CRITICAL: Can win on their next turn!
+    if (total <= 2) return 2; // HIGH THREAT: 2 cards left
+    if (handCount === 0 && faceUpCount <= 2) return 2; // HIGH THREAT: In face-up phase with <=2 cards
+    if (total <= 4) return 1; // MODERATE THREAT
+    return 0; // NORMAL
+  }
+
+  function chooseSmartHandGroup(legalGroups, room, botUid) {
+    if (legalGroups.length === 0) return null;
+    if (legalGroups.length === 1) return legalGroups[0];
+
+    const nextOpponent = getNextActiveOpponent(room, botUid);
+    const threatLevel = evaluateOpponentThreat(nextOpponent);
+    const pileTop = room.pileTop;
+    const pileLength = (room.pile && room.pile.length) || 0;
+
+    // 1. If pile can be burned with a 10
+    const tenGroup = legalGroups.find(g => g[0].rank === '10');
+    if (tenGroup) {
+      // If next opponent is a high/critical threat, burn immediately to get another turn!
+      // Or if the pile has at least 2 cards, burn it to clean table and take extra turn!
+      if (threatLevel >= 2 || pileLength >= 2) {
+        return tenGroup;
+      }
+    }
+
+    // 2. Anti-win tactical defense when next opponent is about to win (threatLevel >= 2)
+    if (threatLevel >= 2 && nextOpponent) {
+      // Check if opponent is playing from face-up (we can see their exact cards)
+      if (nextOpponent.handCount === 0 && nextOpponent.faceUp && nextOpponent.faceUp.length > 0) {
+        const oppCards = nextOpponent.faceUp;
+        const oppHasOnlyHighCards = oppCards.every(c => c.value > 7 && c.rank !== '2');
+
+        // If opponent has only high cards (> 7) and no 2, playing a 7 completely traps them!
+        const sevenGroup = legalGroups.find(g => g[0].rank === '7');
+        if (sevenGroup && oppHasOnlyHighCards) {
+          return sevenGroup;
+        }
+
+        // Check if we can play a card higher than their highest faceUp card
+        const oppMaxVal = Math.max(...oppCards.map(c => c.value));
+        const blockingHighGroups = legalGroups.filter(g => g[0].value > oppMaxVal && g[0].rank !== '2' && g[0].rank !== '10');
+        if (blockingHighGroups.length > 0) {
+          // Play the lowest card that still blocks them
+          blockingHighGroups.sort((a, b) => a[0].value - b[0].value);
+          return blockingHighGroups[0];
+        }
+      }
+
+      // If next opponent has few cards in hand, NEVER play low cards (3, 4, 5, 6) if we can avoid it!
+      const highPressureGroups = legalGroups.filter(g => g[0].value >= 8 && g[0].rank !== '2');
+      if (highPressureGroups.length > 0) {
+        // Sort highest first to put maximum pressure on opponent
+        highPressureGroups.sort((a, b) => b[0].value - a[0].value);
+        return highPressureGroups[0];
+      }
+
+      // If no high cards, but has a 7
+      const sevenGroup = legalGroups.find(g => g[0].rank === '7');
+      if (sevenGroup) return sevenGroup;
+
+      // If only option is 10 or 2, use it rather than giving them a 3
+      if (tenGroup) return tenGroup;
+      const twoGroup = legalGroups.find(g => g[0].rank === '2');
+      if (twoGroup) return twoGroup;
+    }
+
+    // 3. Normal Tactical Play (Threat is low or moderate)
+    // A) If we have multi-card combos (pairs/triples), playing them is great to shed cards
+    const multiGroups = legalGroups.filter(g => g.length > 1 && g[0].rank !== '2' && g[0].rank !== '10');
+    if (multiGroups.length > 0) {
+      // Sort by combo size desc, then value asc
+      multiGroups.sort((a, b) => (b.length - a.length) || (a[0].value - b[0].value));
+      return multiGroups[0];
+    }
+
+    // B) Standard ladder climbing: prefer normal cards (3..A) that beat pileTop without wasting 2 or 10
+    const normalGroups = legalGroups.filter(g => g[0].rank !== '2' && g[0].rank !== '10');
+    if (normalGroups.length > 0) {
+      // Sort ascending to climb ladder smoothly
+      normalGroups.sort((a, b) => a[0].value - b[0].value);
+      return normalGroups[0];
+    }
+
+    // C) If only special cards (2 or 10) are legal:
+    if (tenGroup && pileLength >= 2) return tenGroup;
+    const twoGroup = legalGroups.find(g => g[0].rank === '2');
+    if (twoGroup) return twoGroup;
+    if (tenGroup) return tenGroup;
+
+    return legalGroups[0];
+  }
+
+  function chooseSmartFaceUpCard(legalFaceUp, room, botUid) {
+    if (legalFaceUp.length === 0) return null;
+    if (legalFaceUp.length === 1) return legalFaceUp[0];
+
+    const nextOpponent = getNextActiveOpponent(room, botUid);
+    const threatLevel = evaluateOpponentThreat(nextOpponent);
+
+    // If opponent is about to win, play blocking cards!
+    if (threatLevel >= 2 && nextOpponent) {
+      // If we have a 10, burn and take another turn
+      const ten = legalFaceUp.find(c => c.rank === '10');
+      if (ten) return ten;
+
+      // If opponent face-up only has cards > 7, play a 7 to block
+      if (nextOpponent.handCount === 0 && nextOpponent.faceUp && nextOpponent.faceUp.length > 0) {
+        const oppOnlyHigh = nextOpponent.faceUp.every(c => c.value > 7 && c.rank !== '2');
+        const seven = legalFaceUp.find(c => c.rank === '7');
+        if (seven && oppOnlyHigh) return seven;
+      }
+
+      // Otherwise play the highest card available to block them
+      const sortedDesc = [...legalFaceUp].sort((a, b) => b.value - a.value);
+      return sortedDesc[0];
+    }
+
+    // Normal ladder climbing: play lowest legal card (saving 2 and 10 if possible)
+    const normalFaceUp = legalFaceUp.filter(c => c.rank !== '2' && c.rank !== '10');
+    if (normalFaceUp.length > 0) {
+      normalFaceUp.sort((a, b) => a.value - b.value);
+      return normalFaceUp[0];
+    }
+
+    const sortedAsc = [...legalFaceUp].sort((a, b) => a.value - b.value);
+    return sortedAsc[0];
+  }
+
   function checkAndTriggerAI(room) {
     if (!room || room.status !== 'PLAYING') return;
 
@@ -1462,12 +1890,7 @@
       const legalGroups = Object.values(grouped).filter(cards => canPlayCard(cards[0], pileTop, isLower));
 
       if (legalGroups.length > 0) {
-        legalGroups.sort((a, b) => {
-          const valA = a[0].rank === '2' ? 100 : (a[0].rank === '10' ? 90 : a[0].value);
-          const valB = b[0].rank === '2' ? 100 : (b[0].rank === '10' ? 90 : b[0].value);
-          return valA - valB;
-        });
-        const chosenCards = legalGroups[0];
+        const chosenCards = chooseSmartHandGroup(legalGroups, room, botUid);
         executePlayAction(botUid, chosenCards);
         return;
       }
@@ -1481,8 +1904,8 @@
     if (faceUp.length > 0) {
       const legalFaceUp = faceUp.filter(c => canPlayCard(c, pileTop, isLower));
       if (legalFaceUp.length > 0) {
-        legalFaceUp.sort((a, b) => a.value - b.value);
-        executePlayAction(botUid, [legalFaceUp[0]]);
+        const chosenCard = chooseSmartFaceUpCard(legalFaceUp, room, botUid);
+        executePlayAction(botUid, [chosenCard]);
         return;
       }
       executePickupAction(botUid);
@@ -1864,7 +2287,8 @@
         faceDown: data.faceDown || [],
         selectable6: sortCardsAscending(data.selectable6 || [])
       };
-      if (State.room && State.room.status === 'SETUP') {
+      const myPublic = (State.room && State.room.players && State.room.players[myUid]) || {};
+      if (State.room && State.room.status === 'SETUP' && !myPublic.setupReady) {
         renderSetupView(State.room, myUid);
       } else if (State.room && State.room.status === 'PLAYING') {
         renderGameTable(State.room, myUid);
@@ -1885,6 +2309,8 @@
       if (room.status === 'WAITING') {
         renderWaitingRoom(room);
       } else if (room.status === 'SETUP') {
+        ensureBetDeducted(room);
+
         // Auto-win check if opponent abandoned during setup
         const allPlayers = Object.values(room.players || {});
         const activeConnected = allPlayers.filter(p => !p.isAbandoned && p.connected !== false);
@@ -1900,6 +2326,33 @@
           return;
         }
 
+        // Check if all players are ready (AI, setupReady, abandoned, or disconnected)
+        const allReady = allPlayers.length > 0 && allPlayers.every(p => p.isAI || p.setupReady || p.isAbandoned || p.connected === false);
+        if (allReady) {
+          const turnOrder = room.turnOrder || Object.keys(room.players || {});
+          let startIdx = room.currentTurnIndex;
+          if (startIdx === undefined || startIdx === null || !room.activePlayerUid) {
+            startIdx = Math.floor(Math.random() * turnOrder.length);
+          }
+          const firstTurn = room.activePlayerUid || turnOrder[startIdx] || turnOrder[0];
+          if (State.isCreator || isUserBotController(room)) {
+            currentRoomRef.update({
+              status: 'PLAYING',
+              activePlayerUid: firstTurn,
+              currentTurnIndex: startIdx
+            }).catch(() => {});
+          }
+          room.status = 'PLAYING';
+          room.activePlayerUid = firstTurn;
+          room.currentTurnIndex = startIdx;
+          renderGameTable(room, myUid);
+          showView('game');
+          checkAndTriggerAI(room);
+          const starter = (room.players && room.players[firstTurn]) || { name: 'Jugador' };
+          showToast(`🎲 ¡Inicia la partida! Turno sorteado: ${starter.name}`, '🎲');
+          return;
+        }
+
         if (!room.players[myUid] || !room.players[myUid].setupReady) {
           renderSetupView(room, myUid);
         } else {
@@ -1908,6 +2361,8 @@
           if (DOM.btnConfirmSetup) DOM.btnConfirmSetup.style.display = 'none';
         }
       } else if (room.status === 'PLAYING') {
+        ensureBetDeducted(room);
+
         // Auto-win check if players abandoned / disconnected leaving only 1 active unfinished player
         const allPlayers = Object.values(room.players || {});
         const unfinishedActive = allPlayers.filter(p => !p.isFinished && !p.isAbandoned && p.connected !== false);
@@ -1945,6 +2400,20 @@
     if (DOM.displayRoomCode) DOM.displayRoomCode.textContent = room.id;
     const playerList = Object.values(room.players || {});
     if (DOM.waitingPlayersCount) DOM.waitingPlayersCount.textContent = `${playerList.length} / 4 Jugadores`;
+
+    if (DOM.waitingPrivacyBadge) {
+      if (room.isPublic) {
+        DOM.waitingPrivacyBadge.textContent = '🌐 Sala Pública';
+        DOM.waitingPrivacyBadge.style.background = 'rgba(59, 130, 246, 0.2)';
+        DOM.waitingPrivacyBadge.style.color = '#60a5fa';
+        DOM.waitingPrivacyBadge.style.border = '1px solid rgba(59, 130, 246, 0.4)';
+      } else {
+        DOM.waitingPrivacyBadge.textContent = '🔒 Sala Privada';
+        DOM.waitingPrivacyBadge.style.background = 'rgba(168, 85, 247, 0.2)';
+        DOM.waitingPrivacyBadge.style.color = '#c084fc';
+        DOM.waitingPrivacyBadge.style.border = '1px solid rgba(168, 85, 247, 0.4)';
+      }
+    }
 
     const bet = room.betAmount || selectedBetAmount || 100;
     const pot = bet * playerList.length;
@@ -2313,6 +2782,19 @@
     GuerraChat.cleanup();
     if (currentRoomRef && currentRoomId) {
       const myUid = State.myUid;
+      const db = global.FirebaseService && global.FirebaseService.getDb();
+      if (db) {
+        if (State.isCreator) {
+          db.ref('guerra_public_rooms/' + currentRoomId).remove().catch(() => {});
+        } else if (State.room && State.room.isPublic && State.room.status === 'WAITING') {
+          const remaining = Object.values(State.room.players || {}).filter(p => p.id !== myUid && p.connected !== false).length;
+          if (remaining <= 0) {
+            db.ref('guerra_public_rooms/' + currentRoomId).remove().catch(() => {});
+          } else {
+            db.ref('guerra_public_rooms/' + currentRoomId).update({ playerCount: remaining, status: 'WAITING' }).catch(() => {});
+          }
+        }
+      }
       try {
         currentRoomRef.child(`players/${myUid}`).update({ connected: false });
       } catch (e) {}
@@ -2362,14 +2844,47 @@
       DOM.btnRefillCoins.addEventListener('click', claimFreeCoinsBonus);
     }
 
+    // Create Public Room Button
+    if (DOM.btnCreatePublic) {
+      DOM.btnCreatePublic.addEventListener('click', async () => {
+        try {
+          const roomId = await createRoom(true);
+          showToast(`¡Sala pública creada! Código: ${roomId}`, '🌐');
+        } catch (e) {
+          showToast(e.message || 'Error creando sala.', '❌');
+        }
+      });
+    }
+
+    // Create Private Room Button
+    if (DOM.btnCreatePrivate) {
+      DOM.btnCreatePrivate.addEventListener('click', async () => {
+        try {
+          const roomId = await createRoom(false);
+          showToast(`¡Sala privada creada! Código: ${roomId}`, '🔒');
+        } catch (e) {
+          showToast(e.message || 'Error creando sala.', '❌');
+        }
+      });
+    }
+
+    // Fallback Create Room Button
     if (DOM.btnCreateRoom) {
       DOM.btnCreateRoom.addEventListener('click', async () => {
         try {
-          const roomId = await createRoom();
+          const roomId = await createRoom(true);
           showToast(`¡Sala de Guerra creada! Código: ${roomId}`, '🚀');
         } catch (e) {
           showToast(e.message || 'Error creando sala.', '❌');
         }
+      });
+    }
+
+    // Refresh Public Rooms list button
+    if (DOM.btnRefreshPublicRooms) {
+      DOM.btnRefreshPublicRooms.addEventListener('click', () => {
+        listenPublicRooms();
+        showToast('Lista de salas públicas actualizada.', '🔄');
       });
     }
 
@@ -2485,6 +3000,7 @@
     cacheDOM();
     initEvents();
     updateCoinsDisplay();
+    listenPublicRooms();
   }
 
   const GuerraGame = {
@@ -2498,7 +3014,13 @@
     addPlayerCoins,
     calculatePrizeForPlace,
     chat: GuerraChat,
-    sortCardsAscending
+    sortCardsAscending,
+    _ai: {
+      evaluateOpponentThreat,
+      getNextActiveOpponent,
+      chooseSmartHandGroup,
+      chooseSmartFaceUpCard
+    }
   };
 
   if (typeof module !== 'undefined' && module.exports) {

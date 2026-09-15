@@ -683,12 +683,16 @@
               <label class="input-label" style="margin: 0;">Monto de la Apuesta (🪙 Monedas)</label>
               <span style="font-size: 11px; color: var(--text-muted);">El ganador se lleva todo el bote</span>
             </div>
-            <div id="guerra-bet-selector" class="btn-group" style="flex-wrap: wrap;">
-              <button class="btn btn-toggle-option" data-bet="50" style="flex: 1; min-width: 55px; padding: 8px 4px; font-size: 13px;">50 🪙</button>
-              <button class="btn btn-toggle-option active" data-bet="100" style="flex: 1; min-width: 55px; padding: 8px 4px; font-size: 13px;">100 🪙</button>
-              <button class="btn btn-toggle-option" data-bet="250" style="flex: 1; min-width: 55px; padding: 8px 4px; font-size: 13px;">250 🪙</button>
-              <button class="btn btn-toggle-option" data-bet="500" style="flex: 1; min-width: 55px; padding: 8px 4px; font-size: 13px;">500 🪙</button>
-              <button class="btn btn-toggle-option" data-bet="1000" style="flex: 1; min-width: 55px; padding: 8px 4px; font-size: 13px;">1,000 🪙</button>
+            <div id="guerra-bet-selector" class="btn-group" style="display: flex; flex-wrap: wrap; gap: 6px;">
+              <button class="btn btn-toggle-option" data-bet="50" style="flex: 1 1 50px; min-width: 50px; padding: 8px 4px; font-size: 12px;">50 🪙</button>
+              <button class="btn btn-toggle-option active" data-bet="100" style="flex: 1 1 50px; min-width: 50px; padding: 8px 4px; font-size: 12px;">100 🪙</button>
+              <button class="btn btn-toggle-option" data-bet="250" style="flex: 1 1 50px; min-width: 50px; padding: 8px 4px; font-size: 12px;">250 🪙</button>
+              <button class="btn btn-toggle-option" data-bet="500" style="flex: 1 1 50px; min-width: 50px; padding: 8px 4px; font-size: 12px;">500 🪙</button>
+              <button class="btn btn-toggle-option" data-bet="1000" style="flex: 1 1 58px; min-width: 58px; padding: 8px 4px; font-size: 12px;">1,000 🪙</button>
+              <button class="btn btn-toggle-option" data-bet="5000" style="flex: 1 1 58px; min-width: 58px; padding: 8px 4px; font-size: 12px;">5,000 🪙</button>
+              <button class="btn btn-toggle-option" data-bet="10000" style="flex: 1 1 65px; min-width: 65px; padding: 8px 4px; font-size: 12px;">10,000 🪙</button>
+              <button class="btn btn-toggle-option" data-bet="20000" style="flex: 1 1 65px; min-width: 65px; padding: 8px 4px; font-size: 12px;">20,000 🪙</button>
+              <button class="btn btn-toggle-option" data-bet="50000" style="flex: 1 1 65px; min-width: 65px; padding: 8px 4px; font-size: 12px;">50,000 🪙</button>
             </div>
           </div>
 
@@ -702,21 +706,48 @@
             </div>
           </div>
 
-          <!-- Create Guerra Room -->
-          <button id="guerra-btn-create-room" class="btn btn-primary" style="background: linear-gradient(135deg, #f59e0b, #d97706); color: #000; font-weight: 800;">
-            <span>🃏</span> CREAR SALA DE GUERRA
-          </button>
+          <!-- Create Guerra Room Options: Public or Private -->
+          <div class="input-group">
+            <label class="input-label">Crear Sala de Juego</label>
+            <div class="guerra-create-buttons-row">
+              <button id="guerra-btn-create-public" class="btn btn-primary" style="flex: 1.2; background: linear-gradient(135deg, #f59e0b, #d97706); color: #000; font-weight: 800; padding: 12px 10px; font-size: 14px;">
+                <span>🌐</span> CREAR SALA PÚBLICA
+              </button>
+              <button id="guerra-btn-create-private" class="btn" style="flex: 1; background: rgba(30, 41, 59, 0.8); border: 1px solid var(--accent-amber); color: #fff; font-weight: 700; padding: 12px 10px; font-size: 14px;">
+                <span>🔒</span> SALA PRIVADA
+              </button>
+            </div>
+            <!-- Fallback hidden button for backward compatibility -->
+            <button id="guerra-btn-create-room" style="display: none;"></button>
+          </div>
 
           <!-- Rules Button in Lobby -->
           <button id="guerra-btn-view-rules" class="btn" style="background: rgba(245, 158, 11, 0.15); color: var(--accent-amber); border: 1px solid var(--accent-amber); font-size: 13px; padding: 10px; width: 100%;">
             <span>📖</span> Reglas y Cómo Jugar
           </button>
 
-          <div class="divider">O UNIRSE A UNA SALA</div>
+          <!-- Live Public Rooms List -->
+          <div class="divider" style="margin: 14px 0 8px;">SALAS PÚBLICAS EN VIVO 🌐</div>
+          <div class="guerra-public-rooms-container">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+              <span style="font-size: 11px; font-weight: 700; color: var(--text-muted); text-transform: uppercase;">
+                Salas disponibles para entrar ahora
+              </span>
+              <button id="guerra-btn-refresh-public-rooms" class="icon-btn" style="width: 24px; height: 24px; font-size: 11px; border: 1px solid rgba(245, 158, 11, 0.4); color: var(--accent-amber);" title="Actualizar lista de salas">🔄</button>
+            </div>
+            <div id="guerra-public-rooms-list" class="public-rooms-list">
+              <div class="public-rooms-empty">
+                <span style="font-size: 24px; opacity: 0.7;">🃏</span>
+                <span>Buscando salas públicas disponibles...</span>
+              </div>
+            </div>
+          </div>
 
-          <!-- Join Guerra Room -->
+          <div class="divider">O UNIRSE CON CÓDIGO PRIVADO 🔑</div>
+
+          <!-- Join Guerra Room with Private Code -->
           <div class="input-group">
-            <label class="input-label" for="guerra-input-join-code">Código de Sala de Guerra</label>
+            <label class="input-label" for="guerra-input-join-code">Código de Sala Privada</label>
             <div class="btn-group">
               <input type="text" id="guerra-input-join-code" class="text-input code-input" placeholder="X7K92" maxlength="6" style="flex: 1.2;">
               <button id="guerra-btn-join-room" class="btn" style="flex: 1;">
@@ -735,6 +766,9 @@
           <div style="display: flex; justify-content: space-between; align-items: center;">
             <h2 class="card-title"><span>🃏</span> Salón de Guerra</h2>
             <div style="display: flex; gap: 6px; align-items: center;">
+              <span id="guerra-waiting-privacy-badge" class="difficulty-badge" style="background: rgba(59, 130, 246, 0.2); color: #60a5fa; border: 1px solid rgba(59, 130, 246, 0.4);">
+                🌐 Pública
+              </span>
               <span id="guerra-waiting-bet-badge" class="difficulty-badge" style="background: rgba(245, 158, 11, 0.2); color: var(--accent-amber); border: 1px solid var(--accent-amber);">
                 🪙 Apuesta: 100
               </span>

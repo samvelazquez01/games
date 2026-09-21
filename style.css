@@ -1729,6 +1729,14 @@ body {
   animation: pulseSlow 1.5s infinite;
 }
 
+.guerra-turn-badge.spectator-turn {
+  background: rgba(59, 130, 246, 0.2);
+  border-color: #3b82f6;
+  color: #93c5fd;
+  box-shadow: 0 0 12px rgba(59, 130, 246, 0.3);
+  animation: none;
+}
+
 /* Player Area (Bottom / Sur) */
 .guerra-player-area {
   display: flex;
@@ -2785,6 +2793,40 @@ body {
   padding: 6px 10px;
   border-radius: var(--radius-sm);
   border: 1px solid rgba(245, 158, 11, 0.3);
+}
+
+.quick-bet-chips-row {
+  display: flex;
+  gap: 6px;
+  margin-top: 8px;
+  flex-wrap: wrap;
+}
+
+.quick-bet-chip {
+  padding: 6px 12px;
+  font-size: 12px;
+  font-weight: 700;
+  border-radius: var(--radius-full);
+  border: 1px solid var(--border-color);
+  background: var(--bg-card);
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: all 0.15s ease;
+  font-family: var(--font-mono);
+}
+
+.quick-bet-chip:hover {
+  border-color: var(--accent-amber);
+  color: #fff;
+  background: rgba(30, 41, 59, 0.9);
+}
+
+.quick-bet-chip.selected {
+  border-color: #f59e0b !important;
+  background: #f59e0b !important;
+  color: #000 !important;
+  font-weight: 900 !important;
+  box-shadow: 0 0 10px rgba(245, 158, 11, 0.4);
 }
 
 .bet-options-grid {

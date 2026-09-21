@@ -281,6 +281,10 @@
   }
 
   function awardPrizeIfEligible(playerUid, place, room) {
+    if (playerUid === State.myUid) {
+      State.myFinished = true;
+      if (!State.myFinishedPlace) State.myFinishedPlace = place;
+    }
     if (playerUid !== State.myUid) return 0;
     const matchId = (room && (room.matchId || room.id)) || currentRoomId || 'match';
     const matchKey = `${matchId}_place_${place}`;
@@ -477,6 +481,8 @@
     isCreator: false,
     selectedForSetup: new Set(),
     selectedCardsToPlay: new Set(),
+    myFinished: false,
+    myFinishedPlace: null,
     myPrivateCards: {
       hand: [],
       faceDown: [],
@@ -549,6 +555,21 @@
     return last4.every(c => c.rank === targetRank);
   }
 
+  function getRoomTurnOrder(room) {
+    if (!room) return [];
+    const t = room.turnOrder;
+    if (Array.isArray(t)) return t;
+    if (t && typeof t === 'object') return Object.values(t);
+    return Object.keys(room.players || {});
+  }
+
+  function getRoomWinners(room) {
+    if (!room || !room.winners) return [];
+    if (Array.isArray(room.winners)) return room.winners;
+    if (typeof room.winners === 'object') return Object.values(room.winners);
+    return [];
+  }
+
   function isUserBotController(room) {
     if (isSinglePlayerMode) return true;
     if (!room || !room.players) return false;
@@ -556,11 +577,49 @@
     if (creator && creator.connected && !creator.isAbandoned) {
       return State.myUid === room.creatorId;
     }
-    const humanPlayers = (room.turnOrder || []).filter(uid => {
+    const turnOrder = getRoomTurnOrder(room);
+    const humanPlayers = turnOrder.filter(uid => {
       const p = room.players[uid];
       return p && !p.isAI && p.connected && !p.isAbandoned;
     });
     return humanPlayers.length > 0 && humanPlayers[0] === State.myUid;
+  }
+
+  function isPlayerCompleted(p, room = null) {
+    if (!p) return false;
+    if (p.isAbandoned || p.connected === false) return true;
+    if (p.isFinished) return true;
+
+    const currentRoom = room || (isSinglePlayerMode ? singlePlayerState : State.room);
+    if (!currentRoom || currentRoom.status !== 'PLAYING') return false;
+
+    const pUid = p.id || p.uid;
+    if (pUid && pUid === State.myUid && State.myFinished) return true;
+
+    const winners = getRoomWinners(currentRoom);
+    if (pUid && winners.some(w => w && (w.uid === pUid || w.id === pUid))) return true;
+
+    // A player can ONLY finish by card count if the draw deck has been completely exhausted
+    const deckCount = (currentRoom.deckCount !== undefined)
+      ? currentRoom.deckCount
+      : ((currentRoom.drawDeck && currentRoom.drawDeck.length) || 0);
+
+    if (deckCount > 0) {
+      return false; // While deck has cards, players draw back to 3; they cannot be done
+    }
+
+    const hand = p.handCount || 0;
+    const up = (p.faceUp && p.faceUp.length) || 0;
+    const down = p.faceDownCount || 0;
+
+    // For local human player, double-check local private state
+    if (pUid === State.myUid && !isSinglePlayerMode) {
+      const myHand = (State.myPrivateCards && State.myPrivateCards.hand) ? State.myPrivateCards.hand.length : 0;
+      const myDown = (State.myPrivateCards && State.myPrivateCards.faceDown) ? State.myPrivateCards.faceDown.length : 0;
+      if (myHand > 0 || myDown > 0) return false;
+    }
+
+    return (hand + up + down === 0);
   }
 
   function ensureValidActiveTurn(room) {
@@ -568,18 +627,19 @@
     const activeUid = room.activePlayerUid;
     const activePlayer = room.players && room.players[activeUid];
 
-    const isStuck = !activePlayer || activePlayer.isFinished || activePlayer.isAbandoned || activePlayer.connected === false;
+    const isStuck = !activePlayer || isPlayerCompleted(activePlayer, room);
     if (!isStuck) return;
 
-    const turnOrder = room.turnOrder || Object.keys(room.players || {});
+    const turnOrder = getRoomTurnOrder(room);
+    if (turnOrder.length === 0) return;
     let nextIdx = ((room.currentTurnIndex || 0) + 1) % turnOrder.length;
     let loops = 0;
     let foundUid = null;
 
     while (loops < turnOrder.length) {
       const candidateUid = turnOrder[nextIdx];
-      const p = room.players[candidateUid];
-      if (p && !p.isFinished && !p.isAbandoned && p.connected !== false) {
+      const p = room.players && room.players[candidateUid];
+      if (p && !isPlayerCompleted(p, room)) {
         foundUid = candidateUid;
         break;
       }
@@ -601,6 +661,14 @@
           currentTurnIndex: nextIdx,
           activePlayerUid: foundUid
         }).catch(() => {});
+      }
+    } else {
+      if (isSinglePlayerMode) {
+        singlePlayerState.status = 'FINISHED';
+        renderResultsView(singlePlayerState);
+        showView('results');
+      } else if (isUserBotController(room) && currentRoomRef) {
+        currentRoomRef.update({ status: 'FINISHED' }).catch(() => {});
       }
     }
   }
@@ -976,6 +1044,8 @@
     State.myUid = uid;
     State.isCreator = true;
     State.botPrivateData = {};
+    State.myFinished = false;
+    State.myFinishedPlace = null;
     payoutProcessedForMatch = null;
     GuerraChat.init(roomId);
 
@@ -1082,12 +1152,18 @@
         currentRoomRef = roomRef;
         State.myUid = uid;
         State.isCreator = (room.creatorId === uid);
+        const myPlr = room.players[uid];
+        State.myFinished = !!(myPlr && myPlr.isFinished);
+        State.myFinishedPlace = myPlr ? myPlr.finishPlace : null;
         GuerraChat.init(cleanCode);
         attachRoomListeners(roomRef, uid);
         return cleanCode;
       }
       throw new Error('La partida ya ha comenzado.');
     }
+
+    State.myFinished = false;
+    State.myFinishedPlace = null;
 
     const currentPlayers = room.players || {};
     const count = Object.keys(currentPlayers).length;
@@ -1462,6 +1538,8 @@
 
     const totalPot = bet * shuffledTurnOrder.length;
     const matchId = `m_${currentRoomId}_${Date.now()}_${Math.random().toString(36).substr(2, 4)}`;
+    State.myFinished = false;
+    State.myFinishedPlace = null;
 
     const db = global.FirebaseService.getDb();
     if (db) {
@@ -1549,6 +1627,8 @@
       return;
     }
 
+    State.myFinished = false;
+    State.myFinishedPlace = null;
     const deck = createDeck();
     const botNames = ['Bot Alfa 🤖', 'Bot Beta 🤖', 'Bot Gamma 🤖'];
     const totalPot = bet * 4;
@@ -1974,6 +2054,7 @@
   async function executePlayAction(playerUid, playedCards, isFromFaceDown = false) {
     const room = isSinglePlayerMode ? singlePlayerState : State.room;
     if (!room || !room.players || !room.players[playerUid]) return;
+    if (room.status === 'FINISHED') return;
 
     const player = room.players[playerUid];
     const firstCard = playedCards[0];
@@ -2087,19 +2168,29 @@
       if (myTotal === 0 && teamTotal === 0 && !player.isFinished) {
         player.isFinished = true;
         if (teammate) teammate.isFinished = true;
+        if (playerUid === State.myUid || (teammateUid && teammateUid === State.myUid)) {
+          State.myFinished = true;
+          State.myFinishedPlace = 1;
+        }
         showToast(`🏆 ¡El Equipo ${player.team === 'blue' ? 'Azul 🔵' : 'Rojo 🔴'} terminó todas sus cartas!`, '🎉');
         CardAudio.win();
       }
     } else {
-      const totalRemaining = player.handCount + player.faceUpCount + player.faceDownCount;
+      const totalRemaining = targetPlayer.handCount + targetPlayer.faceUpCount + targetPlayer.faceDownCount;
       if (totalRemaining === 0 && !player.isFinished) {
         player.isFinished = true;
-        const currentWinners = room.winners || [];
+        targetPlayer.isFinished = true;
+        const currentWinners = getRoomWinners(room);
         const place = currentWinners.length + 1;
         player.finishPlace = place;
+        targetPlayer.finishPlace = place;
         currentWinners.push({ uid: playerUid, name: player.name, place, team: player.team });
         room.winners = currentWinners;
-        showToast(`🏆 ¡${player.name} terminó todas sus cartas!`, '🎉');
+        if (playerUid === State.myUid) {
+          State.myFinished = true;
+          State.myFinishedPlace = place;
+        }
+        showToast(`🏆 ¡${player.name} terminó todas sus cartas en puesto #${place}!`, '🎉');
         CardAudio.win();
         awardPrizeIfEligible(playerUid, place, room);
       }
@@ -2107,17 +2198,19 @@
 
     // Next Turn
     // CRITICAL: A player who is finished CANNOT take another turn even if they burned the pile!
-    const canTakeExtraTurn = isBurn && !player.isFinished;
-    let nextTurnUid = playerUid;
+    const canTakeExtraTurn = isBurn && !isPlayerCompleted(player, room);
+    let nextTurnUid = null;
 
-    if (!canTakeExtraTurn) {
-      const turnOrder = room.turnOrder || Object.keys(room.players);
+    if (canTakeExtraTurn) {
+      nextTurnUid = playerUid;
+    } else {
+      const turnOrder = getRoomTurnOrder(room);
       let nextIdx = (room.currentTurnIndex + 1) % turnOrder.length;
       let loops = 0;
       while (loops < turnOrder.length) {
         const candidateUid = turnOrder[nextIdx];
-        const p = room.players[candidateUid];
-        if (p && !p.isFinished && !p.isAbandoned && p.connected !== false) {
+        const p = room.players && room.players[candidateUid];
+        if (p && !isPlayerCompleted(p, room)) {
           nextTurnUid = candidateUid;
           break;
         }
@@ -2128,15 +2221,15 @@
     }
 
     // Check Game Over (FFA vs 2v2)
-    const activeUnfinished = Object.values(room.players).filter(p => !p.isFinished && !p.isAbandoned && p.connected !== false);
+    const activeUnfinished = Object.values(room.players || {}).filter(p => !isPlayerCompleted(p, room));
     let isGameOver = false;
     let winningTeam = null;
 
     if (room.gameMode === '2v2') {
       const bluePlayers = Object.values(room.players).filter(p => p.team === 'blue');
       const redPlayers = Object.values(room.players).filter(p => p.team === 'red');
-      const blueAllDone = bluePlayers.length > 0 && bluePlayers.every(p => p.isFinished);
-      const redAllDone = redPlayers.length > 0 && redPlayers.every(p => p.isFinished);
+      const blueAllDone = bluePlayers.length > 0 && bluePlayers.every(p => isPlayerCompleted(p));
+      const redAllDone = redPlayers.length > 0 && redPlayers.every(p => isPlayerCompleted(p));
 
       if (blueAllDone) {
         isGameOver = true;
@@ -2150,7 +2243,11 @@
         showToast('🏆 ¡EQUIPO ROJO HA GANADO LA PARTIDA! 🔴', '🎉');
       }
     } else {
-      isGameOver = activeUnfinished.length <= 1;
+      isGameOver = (activeUnfinished.length <= 1);
+    }
+
+    if (isGameOver) {
+      if (aiTurnTimeout) { clearTimeout(aiTurnTimeout); aiTurnTimeout = null; }
     }
 
     State.selectedCardsToPlay.clear();
@@ -2160,7 +2257,7 @@
       singlePlayerState.pileTop = newPileTop;
       singlePlayerState.isLowerRestriction = is7Played;
       singlePlayerState.deckCount = drawDeck.length;
-      singlePlayerState.activePlayerUid = nextTurnUid;
+      singlePlayerState.activePlayerUid = nextTurnUid || (activeUnfinished[0] ? activeUnfinished[0].id : null);
 
       if (isGameOver) {
         singlePlayerState.status = 'FINISHED';
@@ -2179,6 +2276,9 @@
           singlePlayerState.winners.push({ uid: lastPlayer.id, name: lastPlayer.name, place });
           awardPrizeIfEligible(lastPlayer.id, place, singlePlayerState);
         }
+        renderResultsView(singlePlayerState);
+        showView('results');
+        return;
       }
 
       renderGameTable(singlePlayerState, State.myUid);
@@ -2194,13 +2294,14 @@
       deckCount: drawDeck.length,
       drawDeck: drawDeck,
       currentTurnIndex: room.currentTurnIndex,
-      activePlayerUid: nextTurnUid,
+      activePlayerUid: nextTurnUid || (activeUnfinished[0] ? activeUnfinished[0].id : null),
       [`players/${targetUid}/handCount`]: targetPlayer.handCount,
       [`players/${targetUid}/faceUp`]: targetPlayer.faceUp || [],
       [`players/${targetUid}/faceDownCount`]: targetPlayer.faceDownCount,
-      [`players/${targetUid}/isFinished`]: targetPlayer.isFinished,
-      [`players/${playerUid}/isFinished`]: player.isFinished,
-      winners: room.winners || [],
+      [`players/${targetUid}/isFinished`]: targetPlayer.isFinished || false,
+      [`players/${playerUid}/isFinished`]: player.isFinished || false,
+      [`players/${playerUid}/finishPlace`]: player.finishPlace || null,
+      winners: getRoomWinners(room),
       winningTeam: winningTeam || room.winningTeam || null
     };
 
@@ -2214,10 +2315,11 @@
         updates.winningTeam = winningTeam;
       } else if (activeUnfinished.length === 1) {
         const lastPlayer = activeUnfinished[0];
-        const place = (room.winners || []).length + 1;
+        const currentW = getRoomWinners(room);
+        const place = currentW.length + 1;
         updates[`players/${lastPlayer.id}/isFinished`] = true;
         updates[`players/${lastPlayer.id}/finishPlace`] = place;
-        const finalWinners = [...(room.winners || []), { uid: lastPlayer.id, name: lastPlayer.name, place }];
+        const finalWinners = [...currentW, { uid: lastPlayer.id, name: lastPlayer.name, place }];
         updates.winners = finalWinners;
         awardPrizeIfEligible(lastPlayer.id, place, room);
       }
@@ -2243,6 +2345,7 @@
   async function executePickupAction(playerUid, extraFailedCard = null) {
     const room = isSinglePlayerMode ? singlePlayerState : State.room;
     if (!room || !room.players || !room.players[playerUid]) return;
+    if (room.status === 'FINISHED') return;
 
     const player = room.players[playerUid];
     CardAudio.pickup();
@@ -2285,11 +2388,11 @@
     const turnOrder = room.turnOrder || Object.keys(room.players);
     let nextIdx = (room.currentTurnIndex + 1) % turnOrder.length;
     let loops = 0;
-    let nextTurnUid = playerUid;
+    let nextTurnUid = null;
     while (loops < turnOrder.length) {
       const candidateUid = turnOrder[nextIdx];
       const p = room.players[candidateUid];
-      if (p && !p.isFinished && !p.isAbandoned && p.connected !== false) {
+      if (p && !isPlayerCompleted(p)) {
         nextTurnUid = candidateUid;
         break;
       }
@@ -2297,6 +2400,7 @@
       loops++;
     }
     room.currentTurnIndex = nextIdx;
+    if (!nextTurnUid) nextTurnUid = playerUid;
 
     State.selectedCardsToPlay.clear();
 
@@ -2343,7 +2447,7 @@
   // --- RESILIENT SMART AI BOT ENGINE ---
 
   function getNextActiveOpponent(room, currentUid) {
-    const turnOrder = room.turnOrder || Object.keys(room.players || {});
+    const turnOrder = getRoomTurnOrder(room);
     const myIndex = turnOrder.indexOf(currentUid);
     if (myIndex === -1) return null;
     let idx = (myIndex + 1) % turnOrder.length;
@@ -2459,24 +2563,29 @@
   }
 
   function checkAndTriggerAI(room) {
-    if (!room || room.status !== 'PLAYING') return;
+    const currentRoom = isSinglePlayerMode ? singlePlayerState : State.room;
+    if (!currentRoom || currentRoom.status !== 'PLAYING') {
+      if (aiTurnTimeout) { clearTimeout(aiTurnTimeout); aiTurnTimeout = null; }
+      return;
+    }
 
-    ensureValidActiveTurn(room);
+    ensureValidActiveTurn(currentRoom);
 
-    const activeUid = room.activePlayerUid;
+    const activeUid = currentRoom.activePlayerUid;
     if (!activeUid) return;
 
-    const player = room.players && room.players[activeUid];
-    if (!player || !player.isAI || player.isFinished || player.isAbandoned) return;
+    const player = currentRoom.players && currentRoom.players[activeUid];
+    if (!player || !player.isAI || isPlayerCompleted(player)) return;
 
-    if (!isSinglePlayerMode && !isUserBotController(room)) return;
+    if (!isSinglePlayerMode && !isUserBotController(currentRoom)) return;
 
     if (aiTurnTimeout) clearTimeout(aiTurnTimeout);
     const delay = 800 + Math.floor(Math.random() * 500);
 
     aiTurnTimeout = setTimeout(() => {
+      aiTurnTimeout = null;
       try {
-        executeAITurn(activeUid, room);
+        executeAITurn(activeUid);
       } catch (err) {
         console.error('AI Turn error:', err);
         executePickupAction(activeUid);
@@ -2484,9 +2593,12 @@
     }, delay);
   }
 
-  function executeAITurn(botUid, room) {
+  function executeAITurn(botUid) {
+    const room = isSinglePlayerMode ? singlePlayerState : State.room;
+    if (!room || room.status === 'FINISHED') return;
+
     const player = room.players && room.players[botUid];
-    if (!player || player.isFinished) return;
+    if (!player || isPlayerCompleted(player)) return;
 
     let targetUid = botUid;
     const isTeamMode = (room.gameMode === '2v2');
@@ -2602,23 +2714,58 @@
   function renderGameTable(room, myUid) {
     if (!room) return;
     if (room.status === 'FINISHED') {
+      if (aiTurnTimeout) { clearTimeout(aiTurnTimeout); aiTurnTimeout = null; }
       renderResultsView(room);
       showView('results');
       return;
     }
 
-    // Auto-fix active turn if current player is finished or disconnected
-    ensureValidActiveTurn(room);
+    // Never switch away if results view is active
+    const resultsEl = document.getElementById('guerra-view-results');
+    if (resultsEl && resultsEl.classList.contains('active')) {
+      return;
+    }
 
     const players = room.players || {};
-    const turnOrder = room.turnOrder || Object.keys(players);
+    const turnOrder = getRoomTurnOrder(room);
     const activeUid = room.activePlayerUid;
     const activePlayer = players[activeUid] || { name: 'Jugador' };
 
+    // My completion state (Spectator Mode)
+    const myPublic = players[myUid] || {};
+    const winners = getRoomWinners(room);
+    const wonWinner = winners.find(w => w && (w.uid === myUid || w.id === myUid));
+    const isMeDone = (room.status === 'PLAYING') && !!(
+      State.myFinished ||
+      myPublic.isFinished ||
+      (wonWinner && wonWinner.place) ||
+      isPlayerCompleted(myPublic, room)
+    );
+
+    if (isMeDone && (myPublic.isFinished || wonWinner)) {
+      State.myFinished = true;
+      if (!State.myFinishedPlace) {
+        State.myFinishedPlace = myPublic.finishPlace || (wonWinner ? wonWinner.place : 1);
+      }
+    }
+
+    // Auto-fix active turn if current player is finished or disconnected (or if I am already done)
+    if (isMeDone && room.activePlayerUid === myUid) {
+      ensureValidActiveTurn(room);
+    } else {
+      ensureValidActiveTurn(room);
+    }
+
     // Update Turn Badge & Rule Alerts
     if (DOM.turnPlayerName) {
-      DOM.turnPlayerName.textContent = activeUid === myUid ? '¡ES TU TURNO!' : `Turno de ${activePlayer.name}`;
-      DOM.turnNotice.className = `guerra-turn-badge ${activeUid === myUid ? 'my-turn' : ''}`;
+      if (isMeDone) {
+        const otherPlayerName = (activeUid && activeUid !== myUid && activePlayer.name) ? activePlayer.name : 'los demás';
+        DOM.turnPlayerName.textContent = `Turno de ${otherPlayerName} (Modo Espectador)`;
+        DOM.turnNotice.className = 'guerra-turn-badge spectator-turn';
+      } else {
+        DOM.turnPlayerName.textContent = activeUid === myUid ? '¡ES TU TURNO!' : `Turno de ${activePlayer.name}`;
+        DOM.turnNotice.className = `guerra-turn-badge ${activeUid === myUid ? 'my-turn' : ''}`;
+      }
     }
 
     if (DOM.ruleNotice) {
@@ -2822,7 +2969,7 @@
     }
 
     // Update Action Buttons
-    const isMyTurn = activeUid === myUid;
+    const isMyTurn = (activeUid === myUid) && !isMeDone;
     const hasSelection = State.selectedCardsToPlay.size > 0;
     if (DOM.btnPlaySelected) {
       DOM.btnPlaySelected.disabled = !isMyTurn || !hasSelection;
@@ -2832,11 +2979,11 @@
     }
 
     // Check if I have finished (Early Win / Podium in 3-4 player match)
-    if (myPublic.isFinished) {
-      const place = myPublic.finishPlace || 1;
+    if (isMeDone) {
+      const place = State.myFinishedPlace || myPublic.finishPlace || (wonWinner ? wonWinner.place : 1);
       const totalPlayers = turnOrder.length || 4;
       const bet = room.betAmount || 100;
-      const prize = calculatePrizeForPlace(place, totalPlayers, bet);
+      const prize = calculatePrizeForPlace(place, totalPlayers, bet, room);
 
       // Show Early Win Banner in Seat Bottom
       if (DOM.seatBottom) {
@@ -2848,22 +2995,25 @@
         }
         earlyBanner.innerHTML = `
           <div style="font-size: 28px;">🏆</div>
-          <div style="font-size: 15px; font-weight: 800; color: #fff;">
-            ¡HAS TERMINADO EN ${place}º LUGAR!
+          <div style="flex: 1; min-width: 0;">
+            <div style="font-size: 15px; font-weight: 800; color: #fff;">
+              ¡HAS TERMINADO EN ${place}º LUGAR!
+            </div>
+            <div style="font-size: 13px; color: var(--accent-amber); font-weight: 700;">
+              ${prize > 0 ? `Premio Asegurado: +${formatCoinsCompact(prize)} (${prize.toLocaleString()} 🪙)` : '¡Partida Completada!'}
+            </div>
+            <div style="font-size: 11px; color: #94a3b8; margin-top: 2px;">
+              👀 Modo Espectador: viendo la partida terminar. Puedes salir al menú cuando desees:
+            </div>
           </div>
-          <div style="font-size: 13px; color: var(--accent-amber); font-weight: 700;">
-            ${prize > 0 ? `Premio Asegurado: +${prize} Monedas 🪙` : '¡Buen juego!'}
-          </div>
-          <p style="font-size: 11px; color: var(--text-dim); margin: 0; max-width: 280px;">
-            Ya puedes salir al menú con tus premios mientras los demás jugadores terminan su partida.
-          </p>
           <button id="guerra-btn-claim-exit" class="btn-claim-exit">
-            <span>🚪</span> Salir con mis Premios al Menú
+            <span>🚪</span> Salir con mi Premio
           </button>
         `;
         const btnClaimExit = earlyBanner.querySelector('#guerra-btn-claim-exit');
         if (btnClaimExit) {
-          btnClaimExit.onclick = () => {
+          btnClaimExit.onclick = (e) => {
+            e.stopPropagation();
             leaveRoom();
           };
         }
@@ -2875,7 +3025,9 @@
       }
     }
 
-    showView('game');
+    if (room && room.status === 'PLAYING') {
+      showView('game');
+    }
   }
 
   function isCardSelected(card) {
@@ -2922,9 +3074,9 @@
   // --- RESULTS & PODIUM VIEW WITH COIN PAYOUTS ---
 
   function renderResultsView(room) {
-    const winners = room.winners || [];
+    const winners = getRoomWinners(room);
     const bet = room.betAmount || 100;
-    const turnOrder = room.turnOrder || Object.keys(room.players || {});
+    const turnOrder = getRoomTurnOrder(room);
     const totalPlayers = turnOrder.length || 4;
     const totalPot = room.totalPot || (bet * totalPlayers);
     const isTeamMode = (room.gameMode === '2v2');
@@ -3173,7 +3325,7 @@
         // Check if all players are ready (AI, setupReady, abandoned, or disconnected)
         const allReady = allPlayers.length > 0 && allPlayers.every(p => p.isAI || p.setupReady || p.isAbandoned || p.connected === false);
         if (allReady) {
-          const turnOrder = room.turnOrder || Object.keys(room.players || {});
+          const turnOrder = getRoomTurnOrder(room);
           let startIdx = room.currentTurnIndex;
           if (startIdx === undefined || startIdx === null || !room.activePlayerUid) {
             startIdx = Math.floor(Math.random() * turnOrder.length);
@@ -3209,12 +3361,12 @@
 
         // Auto-win check if players abandoned / disconnected leaving only 1 active unfinished player
         const allPlayers = Object.values(room.players || {});
-        const unfinishedActive = allPlayers.filter(p => !p.isFinished && !p.isAbandoned && p.connected !== false);
+        const unfinishedActive = allPlayers.filter(p => !isPlayerCompleted(p, room));
 
         if (allPlayers.length >= 2 && unfinishedActive.length <= 1 && isUserBotController(room)) {
           const solePlayer = unfinishedActive[0];
           if (solePlayer) {
-            const currentWinners = room.winners || [];
+            const currentWinners = getRoomWinners(room);
             const place = currentWinners.length + 1;
             const finalWinners = [...currentWinners, { uid: solePlayer.id, name: solePlayer.name, place }];
             currentRoomRef.update({
@@ -3234,6 +3386,7 @@
         renderGameTable(room, myUid);
         checkAndTriggerAI(room);
       } else if (room.status === 'FINISHED') {
+        if (aiTurnTimeout) { clearTimeout(aiTurnTimeout); aiTurnTimeout = null; }
         renderResultsView(room);
         showView('results');
       }
@@ -3634,9 +3787,12 @@
     const room = isSinglePlayerMode ? singlePlayerState : State.room;
     const myUid = State.myUid;
     const myPlayer = room && room.players && room.players[myUid];
+    const winners = getRoomWinners(room);
+    const isWon = winners.some(w => w && (w.uid === myUid || w.id === myUid)) || State.myFinished;
+    const isDone = !room || room.status === 'FINISHED' || isWon || (myPlayer && isPlayerCompleted(myPlayer, room));
 
-    // If game has already finished or I have already finished, simply leave safely
-    if (!room || room.status === 'FINISHED' || (myPlayer && myPlayer.isFinished)) {
+    // If game has already finished or I have already finished (or have 0 cards left): leave safely without penalty!
+    if (isDone) {
       leaveRoom();
       return;
     }
@@ -3651,7 +3807,7 @@
       if (currentRoomRef && currentRoomId) {
         try {
           const allPlayers = Object.values(room.players || {});
-          const remainingUnfinished = allPlayers.filter(p => p.id !== myUid && !p.isFinished && !p.isAbandoned && p.connected !== false);
+          const remainingUnfinished = allPlayers.filter(p => p.id !== myUid && !isPlayerCompleted(p, room));
 
           const updates = {
             [`players/${myUid}/connected`]: false,
@@ -3660,7 +3816,7 @@
 
           if (remainingUnfinished.length === 1 && (room.status === 'PLAYING' || room.status === 'SETUP')) {
             const solePlayer = remainingUnfinished[0];
-            const currentWinners = room.winners || [];
+            const currentWinners = getRoomWinners(room);
             const place = currentWinners.length + 1;
             updates.status = 'FINISHED';
             updates.winners = [...currentWinners, { uid: solePlayer.id, name: solePlayer.name, place }];
@@ -3674,7 +3830,7 @@
             while (loops < turnOrder.length) {
               const candidate = turnOrder[nextIdx];
               const p = room.players[candidate];
-              if (candidate !== myUid && p && !p.isFinished && !p.isAbandoned && p.connected !== false) {
+              if (candidate !== myUid && p && !isPlayerCompleted(p)) {
                 updates.currentTurnIndex = nextIdx;
                 updates.activePlayerUid = candidate;
                 break;
@@ -3693,6 +3849,10 @@
   }
 
   function leaveRoom() {
+    if (aiTurnTimeout) {
+      clearTimeout(aiTurnTimeout);
+      aiTurnTimeout = null;
+    }
     GuerraChat.cleanup();
     if (currentRoomRef && currentRoomId) {
       const myUid = State.myUid;
@@ -3724,6 +3884,10 @@
       teammatePrivateRef = null;
     }
     State.teammatePrivateCards = { hand: [], faceDown: [] };
+    State.myFinished = false;
+    State.myFinishedPlace = null;
+    State.selectedCardsToPlay.clear();
+    State.selectedForSetup.clear();
     currentRoomId = null;
     isSinglePlayerMode = false;
     singlePlayerState = null;
@@ -3794,6 +3958,11 @@
         });
       }
 
+      document.querySelectorAll('.quick-bet-chip[data-bet]').forEach(chip => {
+        const chipBet = parseInt(chip.dataset.bet, 10);
+        chip.classList.toggle('selected', chipBet === selectedBetAmount);
+      });
+
       CardAudio.click();
       closeBetSelectorModal();
     }
@@ -3801,6 +3970,16 @@
     if (DOM.btnOpenBetSelector) {
       DOM.btnOpenBetSelector.addEventListener('click', openBetSelectorModal);
     }
+    const btnMoreBets = document.getElementById('guerra-btn-more-bets');
+    if (btnMoreBets) {
+      btnMoreBets.addEventListener('click', openBetSelectorModal);
+    }
+    document.querySelectorAll('.quick-bet-chip[data-bet]').forEach(chip => {
+      chip.addEventListener('click', () => {
+        const betVal = chip.dataset.bet;
+        applySelectedBet(betVal);
+      });
+    });
     if (DOM.btnCloseBetSelector) {
       DOM.btnCloseBetSelector.addEventListener('click', closeBetSelectorModal);
     }

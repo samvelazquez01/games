@@ -255,6 +255,25 @@
         btnRefresh: document.getElementById('admin-btn-refresh')
       };
 
+      function formatCoinsCompact(num) {
+        if (num === null || num === undefined) return '';
+        const n = Number(num);
+        if (isNaN(n)) return String(num);
+        const sign = n < 0 ? '-' : '';
+        const abs = Math.abs(n);
+        if (abs >= 1000000) {
+          const m = abs / 1000000;
+          const str = (m % 1 === 0) ? m.toFixed(0) : parseFloat(m.toFixed(2)).toString();
+          return `${sign}${str}M`;
+        }
+        if (abs >= 100000) {
+          const k = abs / 1000;
+          const str = (k % 1 === 0) ? k.toFixed(0) : parseFloat(k.toFixed(2)).toString();
+          return `${sign}${str}k`;
+        }
+        return n.toLocaleString();
+      }
+
       function showToast(msg, icon = 'ℹ️') {
         const c = document.getElementById('toast-container');
         if (!c) return;
@@ -312,7 +331,7 @@
         DOM.statTotalUsers.textContent = userList.length;
 
         const totalCoins = userList.reduce((acc, u) => acc + (parseInt(u.coins, 10) || 0), 0);
-        DOM.statTotalCoins.textContent = totalCoins.toLocaleString() + ' 🪙';
+        DOM.statTotalCoins.textContent = `${formatCoinsCompact(totalCoins)} 🪙 (${totalCoins.toLocaleString()})`;
 
         const totalMatches = userList.reduce((acc, u) => acc + (parseInt(u.wins, 10) || 0) + (parseInt(u.losses, 10) || 0), 0);
         DOM.statTotalMatches.textContent = totalMatches.toLocaleString();
@@ -358,7 +377,10 @@
                 <span style="color: var(--accent-rose); font-weight: 800;">${losses}</span>
               </td>
               <td>
-                <input type="number" class="coins-input" value="${coins}" data-uid="${uid}" min="0" step="50">
+                <div style="display: flex; align-items: center; gap: 8px;">
+                  <input type="number" class="coins-input" value="${coins}" data-uid="${uid}" min="0" step="50">
+                  <span style="font-family: var(--font-mono); font-size: 12px; font-weight: 800; color: var(--accent-amber); min-width: 48px;">${formatCoinsCompact(coins)}</span>
+                </div>
               </td>
               <td>
                 <div style="display: flex; gap: 4px; flex-wrap: wrap;">

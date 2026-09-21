@@ -74,13 +74,31 @@
     return n.toLocaleString();
   }
 
+  const LEGACY_COIN_KEYS = [
+    'sudoku_player_coins',
+    'player_coins',
+    'guerra_coins',
+    'coins'
+  ];
+
   function getPlayerCoins() {
-    const stored = localStorage.getItem(COIN_STORAGE_KEY);
+    let stored = localStorage.getItem(COIN_STORAGE_KEY);
+    if (stored === null || isNaN(parseInt(stored, 10))) {
+      for (let i = 0; i < LEGACY_COIN_KEYS.length; i++) {
+        const legacyVal = localStorage.getItem(LEGACY_COIN_KEYS[i]);
+        if (legacyVal !== null && !isNaN(parseInt(legacyVal, 10)) && parseInt(legacyVal, 10) > 0) {
+          stored = legacyVal;
+          break;
+        }
+      }
+    }
     if (stored === null || isNaN(parseInt(stored, 10))) {
       localStorage.setItem(COIN_STORAGE_KEY, DEFAULT_COINS.toString());
       return DEFAULT_COINS;
     }
-    return Math.max(0, parseInt(stored, 10));
+    const clean = Math.max(0, parseInt(stored, 10));
+    localStorage.setItem(COIN_STORAGE_KEY, clean.toString());
+    return clean;
   }
 
   function setPlayerCoins(amount) {
@@ -137,6 +155,49 @@
     }
   }
 
+  async function initUserProfile() {
+    const db = global.FirebaseService && global.FirebaseService.getDb();
+    const uid = getPlayerUid();
+    if (!db || !uid) return;
+
+    try {
+      const snap = await db.ref(`${RTDB_PATHS.USERS}/${uid}`).once('value');
+      const remoteData = snap.val();
+      if (remoteData) {
+        if (remoteData.coins !== undefined && remoteData.coins !== null && !isNaN(remoteData.coins)) {
+          const remoteCoins = Math.max(0, parseInt(remoteData.coins, 10));
+          const localCoins = getPlayerCoins();
+          // Never downgrade coins on startup: preserve the highest between local and remote
+          const bestCoins = Math.max(remoteCoins, localCoins);
+          localStorage.setItem(COIN_STORAGE_KEY, bestCoins.toString());
+          updateCoinsDisplay();
+        }
+        if (remoteData.name && !localStorage.getItem(PLAYER_STORAGE_KEYS.NAME)) {
+          localStorage.setItem(PLAYER_STORAGE_KEYS.NAME, remoteData.name);
+          if (DOM.inputNickname) DOM.inputNickname.value = remoteData.name;
+        }
+        if (remoteData.wins !== undefined) {
+          const localStats = getPlayerStats();
+          localStorage.setItem(STATS_STORAGE_KEYS.WINS, Math.max(localStats.wins, remoteData.wins || 0).toString());
+          localStorage.setItem(STATS_STORAGE_KEYS.LOSSES, Math.max(localStats.losses, remoteData.losses || 0).toString());
+        }
+        await db.ref(`${RTDB_PATHS.USERS}/${uid}`).update({
+          name: getPlayerName(),
+          coins: getPlayerCoins(),
+          lastSeen: (global.firebase && global.firebase.database && global.firebase.database.ServerValue)
+            ? global.firebase.database.ServerValue.TIMESTAMP
+            : Date.now()
+        }).catch(() => {});
+      } else {
+        await syncUserProfile();
+      }
+    } catch (e) {
+      console.warn('Error inicializando perfil de usuario:', e);
+    }
+
+    listenMyUserProfile();
+  }
+
   let userCoinsListenerRef = null;
   function listenMyUserProfile() {
     const db = global.FirebaseService && global.FirebaseService.getDb();
@@ -165,6 +226,8 @@
           }
         }
       }
+    }, err => {
+      console.warn('Aviso de permisos al escuchar monedas:', err);
     });
   }
 
@@ -258,17 +321,34 @@
     const coins = getPlayerCoins();
     const display = document.getElementById('guerra-my-coins-display');
     if (display) {
-      display.textContent = coins.toLocaleString();
+      display.textContent = formatCoinsCompact(coins);
+      display.title = `${coins.toLocaleString()} 🪙`;
     }
     const btnRefill = document.getElementById('guerra-btn-refill-coins');
     if (btnRefill) {
       if (coins >= 1000) {
         btnRefill.style.opacity = '0.5';
-        btnRefill.title = `Saldo: ${coins.toLocaleString()} 🪙. Recarga de +5,000 disponible si bajas de 1,000 🪙.`;
+        btnRefill.title = `Saldo: ${formatCoinsCompact(coins)} 🪙 (${coins.toLocaleString()}). Recarga de +5,000 disponible si bajas de 1,000 🪙.`;
       } else {
         btnRefill.style.opacity = '1';
         btnRefill.title = 'Reclamar recarga de +5,000 🪙 para seguir jugando';
       }
+    }
+
+    const alertZero = document.getElementById('guerra-zero-coins-alert');
+    if (alertZero) {
+      alertZero.style.display = coins < 50 ? 'flex' : 'none';
+    }
+
+    const modalCoins = document.getElementById('bet-modal-user-coins');
+    if (modalCoins) {
+      modalCoins.textContent = `${formatCoinsCompact(coins)} 🪙`;
+      modalCoins.title = `${coins.toLocaleString()} 🪙`;
+    }
+
+    const modalBtnRefill = document.getElementById('bet-modal-btn-refill');
+    if (modalBtnRefill) {
+      modalBtnRefill.style.display = coins < 1000 ? 'inline-block' : 'none';
     }
   }
 
@@ -1787,6 +1867,43 @@
     }
 
     const room = isSinglePlayerMode ? singlePlayerState : State.room;
+    const isDeckEmpty = (room.deckCount || (room.drawDeck && room.drawDeck.length) || 0) === 0;
+
+    // Face-up card combo restriction:
+    // Face-up cards can ONLY be played together with hand cards if this rank represents
+    // the LAST card(s) remaining in the player's hand and the draw deck is empty.
+    let targetUid = State.myUid;
+    if (room.gameMode === '2v2') {
+      const myP = room.players && room.players[State.myUid];
+      const myRem = ((myP && myP.handCount) || 0) + ((myP && myP.faceUp && myP.faceUp.length) || 0) + ((myP && myP.faceDownCount) || 0);
+      if (myRem === 0) {
+        const tUid = getTeammateUid(room, State.myUid);
+        if (tUid) targetUid = tUid;
+      }
+    }
+    const targetP = (room.players && room.players[targetUid]) || {};
+    const targetFaceUp = targetP.faceUp || [];
+    const hasFaceUpInSelection = selectedCards.some(sc => targetFaceUp.some(fc => fc.id === sc.id));
+
+    if (hasFaceUpInSelection) {
+      let curHand = [];
+      if (isSinglePlayerMode) {
+        curHand = (singlePlayerState.privateData[targetUid] && singlePlayerState.privateData[targetUid].hand) || [];
+      } else if (targetUid === State.myUid) {
+        curHand = (State.myPrivateCards && State.myPrivateCards.hand) || [];
+      } else {
+        curHand = (State.teammatePrivateCards && State.teammatePrivateCards.hand) || [];
+      }
+
+      if (curHand.length > 0) {
+        const handOnlyHasMatching = isDeckEmpty && curHand.every(c => c.rank === first.rank);
+        if (!handOnlyHasMatching) {
+          showToast('Solo puedes tirar cartas de la mesa si es la última carta/número en tu mano y el mazo terminó.', '⚠️');
+          return;
+        }
+      }
+    }
+
     const pileTop = room.pileTop;
     const isLower = room.isLowerRestriction;
 
@@ -2427,8 +2544,8 @@
 
       if (legalGroups.length > 0) {
         let chosenCards = chooseSmartHandGroup(legalGroups, room, botUid);
-        // Special rule: if draw deck is empty and faceUp has matching cards, play them together!
-        if (isDeckEmpty && faceUp.length > 0 && chosenCards.length > 0) {
+        // Special rule: if draw deck is empty and faceUp has matching cards, play them together ONLY if all remaining cards in hand are of this rank!
+        if (isDeckEmpty && faceUp.length > 0 && chosenCards.length > 0 && hand.every(c => c.rank === chosenCards[0].rank)) {
           const rank = chosenCards[0].rank;
           const matchingFaceUp = faceUp.filter(c => c.rank === rank);
           if (matchingFaceUp.length > 0) {
@@ -2652,10 +2769,10 @@
         const hasDown = i < myFaceDownCount;
         const upCard = myFaceUp[i] || null;
 
-        // Special combo rule: When draw deck is empty, if an upCard matches hand cards or selection, it's playable together!
-        const hasMatchingInHand = upCard && myHand.some(c => c.rank === upCard.rank);
-        const hasMatchingInSelected = upCard && State.selectedCardsToPlay.size > 0 && Array.from(State.selectedCardsToPlay)[0].rank === upCard.rank;
-        const isComboEligible = isDeckEmpty && upCard && (hasMatchingInHand || hasMatchingInSelected);
+        // Special combo rule: When draw deck is empty, a face-up card can only be played/selected
+        // together with hand cards if this is the LAST card (or cards) remaining in hand (all cards in hand have this rank)!
+        const isLastHandMatching = isDeckEmpty && upCard && myHand.length > 0 && myHand.every(c => c.rank === upCard.rank);
+        const isComboEligible = isLastHandMatching;
 
         const isFaceUpPlayable = (myHand.length === 0 || isComboEligible) && upCard !== null;
         const isFaceDownPlayable = myHand.length === 0 && myFaceUp.length === 0 && hasDown;
@@ -2672,9 +2789,8 @@
 
       DOM.myTableCardsContainer.querySelectorAll('.my-table-slot').forEach((slot, idx) => {
         const upCard = myFaceUp[idx];
-        const hasMatchingInHand = upCard && myHand.some(c => c.rank === upCard.rank);
-        const hasMatchingInSelected = upCard && State.selectedCardsToPlay.size > 0 && Array.from(State.selectedCardsToPlay)[0].rank === upCard.rank;
-        const isComboEligible = isDeckEmpty && upCard && (hasMatchingInHand || hasMatchingInSelected);
+        const isLastHandMatching = isDeckEmpty && upCard && myHand.length > 0 && myHand.every(c => c.rank === upCard.rank);
+        const isComboEligible = isLastHandMatching;
 
         if (upCard && (myHand.length === 0 || isComboEligible)) {
           slot.addEventListener('click', () => {
@@ -3371,8 +3487,12 @@
       const myUid = State.myUid;
       DOM.chatMessagesContainer.innerHTML = messages.map(msg => {
         const isMe = msg.senderUid === myUid;
-        const isBot = msg.isAI;
-        const isEmojiOnly = /^\p{Emoji}+$/u.test(msg.text.trim()) && msg.text.trim().length <= 6;
+        let isEmojiOnly = false;
+        try {
+          isEmojiOnly = new RegExp('^(\\p{Extended_Pictographic}|[\\u{1F300}-\\u{1FAFF}]+)+$', 'u').test(msg.text.trim()) && msg.text.trim().length <= 8;
+        } catch (e) {
+          isEmojiOnly = false;
+        }
         const timeStr = new Date(msg.timestamp || Date.now()).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 
         return `
@@ -3718,9 +3838,17 @@
       });
     }
 
-    // Claim bonus button
+    // Claim bonus / refill buttons
     if (DOM.btnRefillCoins) {
       DOM.btnRefillCoins.addEventListener('click', claimFreeCoinsBonus);
+    }
+    const btnEmergencyRefill = document.getElementById('guerra-btn-emergency-refill');
+    if (btnEmergencyRefill) {
+      btnEmergencyRefill.addEventListener('click', claimFreeCoinsBonus);
+    }
+    const btnModalRefill = document.getElementById('bet-modal-btn-refill');
+    if (btnModalRefill) {
+      btnModalRefill.addEventListener('click', claimFreeCoinsBonus);
     }
 
     // Create Public Room Button
@@ -4004,8 +4132,8 @@
                 ${winrate}%
               </span>
             </td>
-            <td style="text-align: right; font-family: var(--font-mono); font-weight: 800; color: var(--accent-amber);">
-              ${coins.toLocaleString()} 🪙
+            <td style="text-align: right; font-family: var(--font-mono); font-weight: 800; color: var(--accent-amber);" title="${coins.toLocaleString()} 🪙">
+              ${formatCoinsCompact(coins)} 🪙
             </td>
           </tr>
         `;
@@ -4114,13 +4242,12 @@
     });
   }
 
-  function init() {
+  async function init() {
     cacheDOM();
     initEvents();
     updateCoinsDisplay();
     listenPublicRooms();
-    syncUserProfile();
-    listenMyUserProfile();
+    await initUserProfile();
   }
 
   const GuerraGame = {

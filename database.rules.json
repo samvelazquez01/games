@@ -18,6 +18,10 @@
         }
       }
     },
+    "guerra_v2_users": {
+      ".read": "auth != null",
+      ".write": "auth != null"
+    },
 
     "guerra_rooms": {
       "$roomId": {

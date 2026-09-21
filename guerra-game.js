@@ -324,6 +324,33 @@
     return prize;
   }
 
+  function showEarlyVictoryModal(place, room) {
+    const modal = document.getElementById('guerra-modal-early-win');
+    if (!modal) return;
+    const title = document.getElementById('early-win-title');
+    const subtitle = document.getElementById('early-win-subtitle');
+    const prizeAmount = document.getElementById('early-win-prize-amount');
+    const totalPlayers = (room && room.turnOrder ? room.turnOrder.length : 4);
+    const bet = (room && room.betAmount) || 100;
+    const prize = calculatePrizeForPlace(place, totalPlayers, bet, room);
+
+    if (title) title.textContent = place === 1 ? '¡1.º LUGAR! 🏆' : `¡${place}.º LUGAR! 🥈`;
+    if (subtitle) {
+      subtitle.textContent = place === 1
+        ? '¡Has terminado todas tus cartas y te llevas el gran premio!'
+        : (place === 2 ? '¡Excelente partida! Has terminado en segundo puesto y recuperas tu apuesta.' : '¡Partida completada con éxito!');
+    }
+    if (prizeAmount) {
+      prizeAmount.textContent = prize > 0 ? `+${formatCoinsCompact(prize)} Monedas (${prize.toLocaleString()} 🪙)` : '¡Completado!';
+    }
+    modal.classList.add('active');
+  }
+
+  function closeEarlyVictoryModal() {
+    const modal = document.getElementById('guerra-modal-early-win');
+    if (modal) modal.classList.remove('active');
+  }
+
   function isBonusClaimed() {
     return safeStorageGet(BONUS_CLAIMED_KEY) === 'true';
   }
@@ -494,6 +521,8 @@
   let isSinglePlayerMode = false;
   let singlePlayerState = null;
   let aiTurnTimeout = null;
+  let aiTurnScheduledFor = null;
+  let aiWatchdogInterval = null;
   let openBetSelectorModal = () => {};
 
   const State = {
@@ -609,28 +638,28 @@
     if (!p) return false;
     if (p.isAbandoned || p.connected === false) return true;
     if (p.isFinished) return true;
+    if (p.finishPlace) return true;
 
     const currentRoom = room || (isSinglePlayerMode ? singlePlayerState : State.room);
-    if (!currentRoom || currentRoom.status !== 'PLAYING') return false;
-
     const pUid = p.id || p.uid;
+
     if (pUid && pUid === State.myUid && State.myFinished) return true;
 
-    const winners = getRoomWinners(currentRoom);
-    if (pUid && winners.some(w => w && (w.uid === pUid || w.id === pUid))) return true;
+    if (currentRoom) {
+      const winners = getRoomWinners(currentRoom);
+      if (pUid && winners.some(w => w && (w.uid === pUid || w.id === pUid))) return true;
 
-    // A player can ONLY finish by card count if the draw deck has been completely exhausted
-    const deckCount = (currentRoom.deckCount !== undefined)
-      ? currentRoom.deckCount
-      : ((currentRoom.drawDeck && currentRoom.drawDeck.length) || 0);
+      const deckCount = (currentRoom.deckCount !== undefined)
+        ? currentRoom.deckCount
+        : ((currentRoom.drawDeck && currentRoom.drawDeck.length) || 0);
 
-    if (deckCount > 0) {
-      return false; // While deck has cards, players draw back to 3; they cannot be done
+      // If draw deck still has cards, players draw up to 3 cards; they cannot be done
+      if (deckCount > 0) return false;
     }
 
-    const hand = p.handCount || 0;
+    const hand = (p.handCount !== undefined) ? p.handCount : 0;
     const up = (p.faceUp && p.faceUp.length) || 0;
-    const down = p.faceDownCount || 0;
+    const down = (p.faceDownCount !== undefined) ? p.faceDownCount : 0;
 
     // For local human player, double-check local private state
     if (pUid === State.myUid && !isSinglePlayerMode) {
@@ -639,7 +668,106 @@
       if (myHand > 0 || myDown > 0) return false;
     }
 
-    return (hand + up + down === 0);
+    const iAmIndividuallyOut = (hand + up + down === 0);
+
+    // TEAM MODE (2v2) - "Sistema de Ayuda": if MY own cards ran out but my
+    // teammate still has cards, I am NOT completed for turn-rotation purposes.
+    // I keep receiving turns (to play my teammate's cards, see targetUid
+    // redirection in playSelectedCards/playBlindFaceDownCard/executePlayAction)
+    // until BOTH of us are out. Only then does the team-finish check elsewhere
+    // mark isFinished=true for both, which the early checks above already catch.
+    if (iAmIndividuallyOut && currentRoom && currentRoom.gameMode === '2v2' && pUid) {
+      const teammateUid = getTeammateUid(currentRoom, pUid);
+      const teammate = teammateUid && currentRoom.players ? currentRoom.players[teammateUid] : null;
+      if (teammate) {
+        const tHand = (teammate.handCount !== undefined) ? teammate.handCount : 0;
+        const tUp = (teammate.faceUp && teammate.faceUp.length) || 0;
+        const tDown = (teammate.faceDownCount !== undefined) ? teammate.faceDownCount : 0;
+        if ((tHand + tUp + tDown) > 0) {
+          return false; // Teammate still alive -> I'm the helper now, keep my turns.
+        }
+      }
+    }
+
+    return iAmIndividuallyOut;
+  }
+
+  // --- ROBUSTNESS HELPERS (fin de partida / jugadores fuera de competencia) ---
+
+  // Firebase RTDB lanza una excepcion si algun valor es `undefined` (ej. team: undefined
+  // porque RTDB borra los `null`). Esto convierte undefined -> null recursivamente.
+  function sanitizeForFirebase(value) {
+    if (value === undefined) return null;
+    if (Array.isArray(value)) return value.map(sanitizeForFirebase);
+    if (value && typeof value === 'object') {
+      const out = {};
+      Object.keys(value).forEach(k => { out[k] = sanitizeForFirebase(value[k]); });
+      return out;
+    }
+    return value;
+  }
+
+  // Un jugador que ya termino (bot o humano) esta 100% fuera de la competencia.
+  // Nunca puede jugar, recoger ni recibir turno. En 2v2 el "ayudante" (sin cartas
+  // propias pero con companero vivo) NO cuenta como fuera: isPlayerCompleted ya lo maneja.
+  function isActorAllowed(room, playerUid, label) {
+    const p = room && room.players && room.players[playerUid];
+    if (!p) return false;
+    if (isPlayerCompleted(p, room)) {
+      console.warn(`[GUARD] ${label}: ${p.name} ya termino / esta fuera. Accion ignorada.`);
+      ensureValidActiveTurn(room);
+      return false;
+    }
+    if (room.activePlayerUid && room.activePlayerUid !== playerUid) {
+      console.warn(`[GUARD] ${label}: no es el turno de ${p.name} (turno de ${room.activePlayerUid}). Accion ignorada.`);
+      return false;
+    }
+    return true;
+  }
+
+  // Marca a un jugador como terminado en FFA de forma idempotente y lo persiste.
+  function finalizeFFAFinish(room, uid) {
+    const p = room && room.players && room.players[uid];
+    if (!p) return;
+    p.isFinished = true;
+    const winners = getRoomWinners(room);
+    let entry = winners.find(w => w && (w.uid === uid || w.id === uid));
+    if (!entry) {
+      entry = { uid, name: p.name, place: winners.length + 1, team: p.team || null };
+      winners.push(entry);
+      room.winners = winners;
+      showToast(`🏆 ¡${p.name} terminó todas sus cartas en puesto #${entry.place}!`, '🎉');
+    }
+    p.finishPlace = entry.place;
+    if (!isSinglePlayerMode && currentRoomRef) {
+      currentRoomRef.update(sanitizeForFirebase({
+        [`players/${uid}/isFinished`]: true,
+        [`players/${uid}/finishPlace`]: entry.place,
+        winners: winners
+      })).catch(err => console.error('Error persistiendo fin de jugador:', err));
+    }
+    ensureValidActiveTurn(room);
+  }
+
+  function getNextTurnPlayerUid(room, currentActiveUid = null) {
+    if (!room) return null;
+    const turnOrder = getRoomTurnOrder(room);
+    if (!turnOrder || turnOrder.length === 0) return null;
+
+    const fromUid = currentActiveUid || room.activePlayerUid || turnOrder[room.currentTurnIndex || 0];
+    let startIdx = turnOrder.indexOf(fromUid);
+    if (startIdx === -1) startIdx = (room.currentTurnIndex !== undefined ? room.currentTurnIndex : 0);
+
+    for (let i = 1; i <= turnOrder.length; i++) {
+      const nextIdx = (startIdx + i) % turnOrder.length;
+      const candidateUid = turnOrder[nextIdx];
+      const p = room.players && room.players[candidateUid];
+      if (p && !isPlayerCompleted(p, room)) {
+        room.currentTurnIndex = nextIdx;
+        return candidateUid;
+      }
+    }
+    return null; // All players completed
   }
 
   function ensureValidActiveTurn(room) {
@@ -650,36 +778,18 @@
     const isStuck = !activePlayer || isPlayerCompleted(activePlayer, room);
     if (!isStuck) return;
 
-    const turnOrder = getRoomTurnOrder(room);
-    if (turnOrder.length === 0) return;
-    let nextIdx = ((room.currentTurnIndex || 0) + 1) % turnOrder.length;
-    let loops = 0;
-    let foundUid = null;
-
-    while (loops < turnOrder.length) {
-      const candidateUid = turnOrder[nextIdx];
-      const p = room.players && room.players[candidateUid];
-      if (p && !isPlayerCompleted(p, room)) {
-        foundUid = candidateUid;
-        break;
-      }
-      nextIdx = (nextIdx + 1) % turnOrder.length;
-      loops++;
-    }
-
-    if (foundUid) {
-      room.currentTurnIndex = nextIdx;
-      room.activePlayerUid = foundUid;
+    const nextUid = getNextTurnPlayerUid(room, activeUid);
+    if (nextUid) {
+      room.activePlayerUid = nextUid;
 
       if (isSinglePlayerMode) {
-        singlePlayerState.currentTurnIndex = nextIdx;
-        singlePlayerState.activePlayerUid = foundUid;
+        singlePlayerState.activePlayerUid = nextUid;
         renderGameTable(singlePlayerState, State.myUid);
         checkAndTriggerAI(singlePlayerState);
       } else if (isUserBotController(room) && currentRoomRef) {
         currentRoomRef.update({
-          currentTurnIndex: nextIdx,
-          activePlayerUid: foundUid
+          currentTurnIndex: room.currentTurnIndex,
+          activePlayerUid: nextUid
         }).catch(() => {});
       }
     } else {
@@ -808,6 +918,10 @@
     DOM.resultsTableBody = document.getElementById('guerra-results-table-body');
     DOM.btnPlayAgain = document.getElementById('guerra-btn-play-again');
     DOM.btnReturnMenu = document.getElementById('guerra-btn-return-menu');
+
+    DOM.modalEarlyWin = document.getElementById('guerra-modal-early-win');
+    DOM.btnEarlyExit = document.getElementById('btn-early-exit');
+    DOM.btnEarlySpectate = document.getElementById('btn-early-spectate');
 
     // Header actions & modals
     DOM.btnHeaderRules = document.getElementById('btn-rules');
@@ -1961,6 +2075,14 @@
 
   async function playSelectedCards() {
     if (State.selectedCardsToPlay.size === 0) return;
+    {
+      const guardRoom = isSinglePlayerMode ? singlePlayerState : State.room;
+      if (!guardRoom || guardRoom.activePlayerUid !== State.myUid || State.myFinished) {
+        State.selectedCardsToPlay.clear();
+        showToast('No es tu turno.', '⏳');
+        return;
+      }
+    }
     const selectedCards = Array.from(State.selectedCardsToPlay);
     const first = selectedCards[0];
 
@@ -2022,7 +2144,7 @@
 
   async function playBlindFaceDownCard(cardIndex) {
     const room = isSinglePlayerMode ? singlePlayerState : State.room;
-    if (room.activePlayerUid !== State.myUid) {
+    if (room.activePlayerUid !== State.myUid || State.myFinished) {
       showToast('No es tu turno.', '⏳');
       return;
     }
@@ -2069,7 +2191,7 @@
 
   async function pickupPile() {
     const room = isSinglePlayerMode ? singlePlayerState : State.room;
-    if (room.activePlayerUid !== State.myUid) {
+    if (room.activePlayerUid !== State.myUid || State.myFinished) {
       showToast('No es tu turno.', '⏳');
       return;
     }
@@ -2080,10 +2202,11 @@
     const room = isSinglePlayerMode ? singlePlayerState : State.room;
     if (!room || !room.players || !room.players[playerUid]) return;
     if (room.status === 'FINISHED') return;
+    if (!isActorAllowed(room, playerUid, 'executePlayAction')) return;
 
     const player = room.players[playerUid];
     const firstCard = playedCards[0];
-    CardAudio.playCard();
+    if (!firstCard) return;
 
     let targetUid = playerUid;
     const isTeamMode = (room.gameMode === '2v2');
@@ -2109,6 +2232,21 @@
     } else {
       privateInfo = State.teammatePrivateCards;
     }
+
+    // Nadie puede jugar cartas que no tiene (mano o mesa boca arriba).
+    if (!isFromFaceDown) {
+      const ownedHand = privateInfo.hand || [];
+      const ownedUp = targetPlayer.faceUp || [];
+      const ownsAll = playedCards.every(pc => pc && (
+        ownedHand.some(c => c.id === pc.id) || ownedUp.some(c => c.id === pc.id)
+      ));
+      if (!ownsAll) {
+        console.warn(`[GUARD] ${player.name} intento jugar cartas que no posee. Jugada anulada.`);
+        return;
+      }
+    }
+
+    CardAudio.playCard();
 
     // Remove played cards from source (hand and/or face-up table cards)
     if (!isFromFaceDown) {
@@ -2209,40 +2347,19 @@
         const place = currentWinners.length + 1;
         player.finishPlace = place;
         targetPlayer.finishPlace = place;
-        currentWinners.push({ uid: playerUid, name: player.name, place, team: player.team });
+        currentWinners.push({ uid: playerUid, name: player.name, place, team: player.team || null });
         room.winners = currentWinners;
+        CardAudio.win();
+
         if (playerUid === State.myUid) {
           State.myFinished = true;
           State.myFinishedPlace = place;
+          awardPrizeIfEligible(playerUid, place, room);
+          showEarlyVictoryModal(place, room);
+        } else {
+          showToast(`🏆 ¡${player.name} terminó todas sus cartas en puesto #${place}!`, '🎉');
         }
-        showToast(`🏆 ¡${player.name} terminó todas sus cartas en puesto #${place}!`, '🎉');
-        CardAudio.win();
-        awardPrizeIfEligible(playerUid, place, room);
       }
-    }
-
-    // Next Turn
-    // CRITICAL: A player who is finished CANNOT take another turn even if they burned the pile!
-    const canTakeExtraTurn = isBurn && !isPlayerCompleted(player, room);
-    let nextTurnUid = null;
-
-    if (canTakeExtraTurn) {
-      nextTurnUid = playerUid;
-    } else {
-      const turnOrder = getRoomTurnOrder(room);
-      let nextIdx = (room.currentTurnIndex + 1) % turnOrder.length;
-      let loops = 0;
-      while (loops < turnOrder.length) {
-        const candidateUid = turnOrder[nextIdx];
-        const p = room.players && room.players[candidateUid];
-        if (p && !isPlayerCompleted(p, room)) {
-          nextTurnUid = candidateUid;
-          break;
-        }
-        nextIdx = (nextIdx + 1) % turnOrder.length;
-        loops++;
-      }
-      room.currentTurnIndex = nextIdx;
     }
 
     // Check Game Over (FFA vs 2v2)
@@ -2253,8 +2370,8 @@
     if (room.gameMode === '2v2') {
       const bluePlayers = Object.values(room.players).filter(p => p.team === 'blue');
       const redPlayers = Object.values(room.players).filter(p => p.team === 'red');
-      const blueAllDone = bluePlayers.length > 0 && bluePlayers.every(p => isPlayerCompleted(p));
-      const redAllDone = redPlayers.length > 0 && redPlayers.every(p => isPlayerCompleted(p));
+      const blueAllDone = bluePlayers.length > 0 && bluePlayers.every(p => isPlayerCompleted(p, room));
+      const redAllDone = redPlayers.length > 0 && redPlayers.every(p => isPlayerCompleted(p, room));
 
       if (blueAllDone) {
         isGameOver = true;
@@ -2273,6 +2390,17 @@
 
     if (isGameOver) {
       if (aiTurnTimeout) { clearTimeout(aiTurnTimeout); aiTurnTimeout = null; }
+    }
+
+    // Next Turn: Never give extra turn to finished players
+    const isPlayerDone = isPlayerCompleted(player, room);
+    const canTakeExtraTurn = isBurn && !isPlayerDone;
+    let nextTurnUid = null;
+
+    if (canTakeExtraTurn) {
+      nextTurnUid = playerUid;
+    } else {
+      nextTurnUid = getNextTurnPlayerUid(room, playerUid);
     }
 
     State.selectedCardsToPlay.clear();
@@ -2361,7 +2489,7 @@
     } catch (e) {}
 
     try {
-      await currentRoomRef.update(updates);
+      await currentRoomRef.update(sanitizeForFirebase(updates));
     } catch (err) {
       console.error('Error updating room:', err);
     }
@@ -2371,6 +2499,7 @@
     const room = isSinglePlayerMode ? singlePlayerState : State.room;
     if (!room || !room.players || !room.players[playerUid]) return;
     if (room.status === 'FINISHED') return;
+    if (!isActorAllowed(room, playerUid, 'executePickupAction')) return;
 
     const player = room.players[playerUid];
     CardAudio.pickup();
@@ -2410,22 +2539,8 @@
     const newPileTop = null;
     const isLowerRestriction = false;
 
-    const turnOrder = room.turnOrder || Object.keys(room.players);
-    let nextIdx = (room.currentTurnIndex + 1) % turnOrder.length;
-    let loops = 0;
-    let nextTurnUid = null;
-    while (loops < turnOrder.length) {
-      const candidateUid = turnOrder[nextIdx];
-      const p = room.players[candidateUid];
-      if (p && !isPlayerCompleted(p)) {
-        nextTurnUid = candidateUid;
-        break;
-      }
-      nextIdx = (nextIdx + 1) % turnOrder.length;
-      loops++;
-    }
-    room.currentTurnIndex = nextIdx;
-    if (!nextTurnUid) nextTurnUid = playerUid;
+    const nextTurnUid = getNextTurnPlayerUid(room, playerUid) || playerUid;
+    room.activePlayerUid = nextTurnUid;
 
     State.selectedCardsToPlay.clear();
 
@@ -2463,7 +2578,7 @@
     }
 
     try {
-      await currentRoomRef.update(updates);
+      await currentRoomRef.update(sanitizeForFirebase(updates));
     } catch (err) {
       console.error('Error in pickupPile update:', err);
     }
@@ -2587,6 +2702,62 @@
     return sortedAsc[0];
   }
 
+  // Recovers from any failed AI action (sync throw OR async/promise rejection)
+  // so the game never freezes waiting on a bot turn that silently failed.
+  // This is the actual fix for "el juego se queda congelado en el turno del bot":
+  // executePlayAction/executePickupAction are async, so calling them without
+  // awaiting or catching them let internal errors become invisible unhandled
+  // promise rejections that killed the whole auto-play chain with no recovery
+  // until the user happened to interact with the UI (which forced a re-render
+  // and re-armed the chain, making it look like "tocar una carta le da una
+  // carta al bot": it was really the bot finally finishing its overdue turn).
+  function handleAITurnFailure(botUid, err) {
+    console.error('AI Turn error (recovered):', err);
+    const room = isSinglePlayerMode ? singlePlayerState : State.room;
+    if (!room || room.status === 'FINISHED') return;
+    try {
+      const p = room.players && room.players[botUid];
+      if (p && !isPlayerCompleted(p, room)) {
+        executePickupAction(botUid).catch(err2 => {
+          console.error('AI recovery pickup also failed:', err2);
+          ensureValidActiveTurn(room);
+          checkAndTriggerAI(room);
+        });
+      } else {
+        ensureValidActiveTurn(room);
+        checkAndTriggerAI(room);
+      }
+    } catch (err3) {
+      console.error('AI recovery error:', err3);
+    }
+  }
+
+  // Belt-and-suspenders watchdog: runs continuously in the background and
+  // re-nudges the AI/turn engine every couple of seconds. Even if some future
+  // code path forgets to call checkAndTriggerAI after an action, the game
+  // will self-heal on its own within ~2s instead of staying frozen until the
+  // user happens to click something.
+  function startAIWatchdog() {
+    if (aiWatchdogInterval) return;
+    aiWatchdogInterval = setInterval(() => {
+      const room = isSinglePlayerMode ? singlePlayerState : State.room;
+      if (!room || room.status !== 'PLAYING') return;
+      if (aiTurnTimeout) return; // a turn is already scheduled, nothing to nudge
+      try {
+        checkAndTriggerAI(room);
+      } catch (err) {
+        console.error('AI watchdog error:', err);
+      }
+    }, 2000);
+  }
+
+  function stopAIWatchdog() {
+    if (aiWatchdogInterval) {
+      clearInterval(aiWatchdogInterval);
+      aiWatchdogInterval = null;
+    }
+  }
+
   function checkAndTriggerAI(room) {
     const currentRoom = isSinglePlayerMode ? singlePlayerState : State.room;
     if (!currentRoom || currentRoom.status !== 'PLAYING') {
@@ -2600,20 +2771,32 @@
     if (!activeUid) return;
 
     const player = currentRoom.players && currentRoom.players[activeUid];
-    if (!player || !player.isAI || isPlayerCompleted(player)) return;
+    if (!player || !player.isAI || isPlayerCompleted(player, currentRoom)) return;
 
     if (!isSinglePlayerMode && !isUserBotController(currentRoom)) return;
 
+    // Already scheduled for this exact bot? Don't stack duplicate timeouts.
+    if (aiTurnTimeout && aiTurnScheduledFor === activeUid) return;
+
     if (aiTurnTimeout) clearTimeout(aiTurnTimeout);
     const delay = 800 + Math.floor(Math.random() * 500);
+    aiTurnScheduledFor = activeUid;
 
     aiTurnTimeout = setTimeout(() => {
       aiTurnTimeout = null;
+      aiTurnScheduledFor = null;
+      const liveRoom = isSinglePlayerMode ? singlePlayerState : State.room;
+      const livePlayer = liveRoom && liveRoom.players && liveRoom.players[activeUid];
+      if (!liveRoom || liveRoom.status !== 'PLAYING' || liveRoom.activePlayerUid !== activeUid ||
+          !livePlayer || isPlayerCompleted(livePlayer, liveRoom)) {
+        // El turno cambio o el bot ya termino mientras esperaba: no jugar, re-evaluar.
+        if (liveRoom && liveRoom.status === 'PLAYING') checkAndTriggerAI(liveRoom);
+        return;
+      }
       try {
         executeAITurn(activeUid);
       } catch (err) {
-        console.error('AI Turn error:', err);
-        executePickupAction(activeUid);
+        handleAITurnFailure(activeUid, err);
       }
     }, delay);
   }
@@ -2623,7 +2806,8 @@
     if (!room || room.status === 'FINISHED') return;
 
     const player = room.players && room.players[botUid];
-    if (!player || isPlayerCompleted(player)) return;
+    if (!player || isPlayerCompleted(player, room)) return;
+    if (room.activePlayerUid && room.activePlayerUid !== botUid) return;
 
     let targetUid = botUid;
     const isTeamMode = (room.gameMode === '2v2');
@@ -2654,6 +2838,9 @@
             privateInfo = singlePlayerState.privateData[tUid] || { hand: [], faceDown: [] };
           } else if (tPlayer && tPlayer.isAI) {
             privateInfo = (room.botPrivate && room.botPrivate[tUid]) || (State.botPrivateData && State.botPrivateData[tUid]) || { hand: [], faceDown: [] };
+          } else if (tUid === State.myUid) {
+            // El companero humano SOY YO: mis cartas estan en myPrivateCards.
+            privateInfo = State.myPrivateCards || { hand: [], faceDown: [] };
           } else {
             privateInfo = State.teammatePrivateCards || { hand: [], faceDown: [] };
           }
@@ -2689,11 +2876,11 @@
             chosenCards = [...chosenCards, ...matchingFaceUp];
           }
         }
-        executePlayAction(botUid, chosenCards);
+        executePlayAction(botUid, chosenCards).catch(err => handleAITurnFailure(botUid, err));
         return;
       }
 
-      executePickupAction(botUid);
+      executePickupAction(botUid).catch(err => handleAITurnFailure(botUid, err));
       return;
     }
 
@@ -2703,10 +2890,10 @@
       if (legalFaceUp.length > 0) {
         const chosenCard = chooseSmartFaceUpCard(legalFaceUp, room, botUid);
         const matchingFaceUp = faceUp.filter(c => c.rank === chosenCard.rank);
-        executePlayAction(botUid, matchingFaceUp.length > 1 ? matchingFaceUp : [chosenCard]);
+        executePlayAction(botUid, matchingFaceUp.length > 1 ? matchingFaceUp : [chosenCard]).catch(err => handleAITurnFailure(botUid, err));
         return;
       }
-      executePickupAction(botUid);
+      executePickupAction(botUid).catch(err => handleAITurnFailure(botUid, err));
       return;
     }
 
@@ -2718,19 +2905,32 @@
       if (revealed) {
         if (canPlayCard(revealed, pileTop, isLower)) {
           showToast(`🤖 ${player.name} reveló ${revealed.name} (Válida) ✅`, '🂠');
-          executePlayAction(botUid, [revealed], true);
+          executePlayAction(botUid, [revealed], true).catch(err => handleAITurnFailure(botUid, err));
         } else {
           showToast(`🤖 ${player.name} reveló ${revealed.name} (No válida) ❌`, '💥');
-          executePickupAction(botUid, revealed);
+          executePickupAction(botUid, revealed).catch(err => handleAITurnFailure(botUid, err));
         }
         return;
       }
     }
 
-    // Finished
-    if (player.faceDownCount <= 0 && hand.length === 0 && faceUp.length === 0) {
-      player.isFinished = true;
-      executePlayAction(botUid, [], false);
+    // Sin cartas propias ni de companero.
+    if ((privateInfo.faceDown || []).length === 0 && hand.length === 0 && faceUp.length === 0) {
+      if (isTeamMode) {
+        // En 2v2 el fin lo decide la suma de AMBOS companeros, nunca un puesto individual.
+        const tUid = getTeammateUid(room, botUid);
+        const mate = tUid && room.players[tUid];
+        const mateTotal = mate ? ((mate.handCount || 0) + ((mate.faceUp || []).length) + (mate.faceDownCount || 0)) : 0;
+        const ownTotal = (player.handCount || 0) + ((player.faceUp || []).length) + (player.faceDownCount || 0);
+        if (ownTotal === 0 && mateTotal === 0) {
+          player.isFinished = true;
+          if (mate) mate.isFinished = true;
+        }
+        ensureValidActiveTurn(room);
+        return;
+      }
+      finalizeFFAFinish(room, botUid);
+      return;
     }
   }
 
@@ -3050,7 +3250,10 @@
     }
 
     if (room && room.status === 'PLAYING') {
-      showView('game');
+      const resultsEl = document.getElementById('guerra-view-results');
+      if (!resultsEl || !resultsEl.classList.contains('active')) {
+        showView('game');
+      }
     }
   }
 
@@ -3061,6 +3264,7 @@
 
   function toggleCardSelection(card) {
     if (!card) return;
+    if (State.myFinished) return; // ya termine: modo espectador
     const existing = Array.from(State.selectedCardsToPlay).find(c => c.id === card.id);
     if (existing) {
       State.selectedCardsToPlay.delete(existing);
@@ -3386,6 +3590,22 @@
         // Auto-win check if players abandoned / disconnected leaving only 1 active unfinished player
         const allPlayers = Object.values(room.players || {});
         const unfinishedActive = allPlayers.filter(p => !isPlayerCompleted(p, room));
+
+        if (room.gameMode === '2v2' && isUserBotController(room)) {
+          const bluePlayers = Object.values(room.players).filter(p => p.team === 'blue');
+          const redPlayers = Object.values(room.players).filter(p => p.team === 'red');
+          const blueAllDone = bluePlayers.length > 0 && bluePlayers.every(p => isPlayerCompleted(p, room));
+          const redAllDone = redPlayers.length > 0 && redPlayers.every(p => isPlayerCompleted(p, room));
+
+          if (blueAllDone || redAllDone) {
+            const winTeam = blueAllDone ? 'blue' : 'red';
+            currentRoomRef.update({
+              status: 'FINISHED',
+              winningTeam: winTeam
+            }).catch(() => {});
+            return;
+          }
+        }
 
         if (allPlayers.length >= 2 && unfinishedActive.length <= 1 && isUserBotController(room)) {
           const solePlayer = unfinishedActive[0];
@@ -3877,6 +4097,7 @@
       clearTimeout(aiTurnTimeout);
       aiTurnTimeout = null;
     }
+    aiTurnScheduledFor = null;
     GuerraChat.cleanup();
     if (currentRoomRef && currentRoomId) {
       const myUid = State.myUid;
@@ -4186,6 +4407,19 @@
       DOM.btnReturnMenu.addEventListener('click', leaveRoom);
     }
 
+    if (DOM.btnEarlyExit) {
+      DOM.btnEarlyExit.addEventListener('click', () => {
+        closeEarlyVictoryModal();
+        leaveRoom();
+      });
+    }
+    if (DOM.btnEarlySpectate) {
+      DOM.btnEarlySpectate.addEventListener('click', () => {
+        closeEarlyVictoryModal();
+        showToast('Modo Espectador activado. Puedes salir al menú cuando desees.', '👀');
+      });
+    }
+
     // --- RULES MODAL CONTROLS ---
     function openRulesModal() {
       if (DOM.modalRules) DOM.modalRules.classList.add('active');
@@ -4470,6 +4704,32 @@
       updateCoinsDisplay();
     } catch (e) {
       console.warn('updateCoinsDisplay error:', e);
+    }
+
+    try {
+      startAIWatchdog();
+    } catch (e) {
+      console.warn('startAIWatchdog error:', e);
+    }
+
+    // Global safety net: if ANY promise anywhere rejects without being
+    // caught (a failed Firebase write mid-turn, etc.), don't let the match
+    // sit frozen — recover the turn engine automatically.
+    try {
+      global.addEventListener('unhandledrejection', (event) => {
+        console.error('Unhandled promise rejection (auto-recovering):', event.reason);
+        const room = isSinglePlayerMode ? singlePlayerState : State.room;
+        if (room && room.status === 'PLAYING') {
+          try {
+            ensureValidActiveTurn(room);
+            checkAndTriggerAI(room);
+          } catch (e) {
+            console.error('Auto-recovery after unhandled rejection failed:', e);
+          }
+        }
+      });
+    } catch (e) {
+      console.warn('unhandledrejection listener setup error:', e);
     }
 
     // 2. Firebase background calls (never block UI or freeze buttons)

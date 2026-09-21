@@ -12,7 +12,7 @@
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&family=JetBrains+Mono:wght@600;700;800;900&display=swap" rel="stylesheet">
   
   <!-- Stylesheet -->
-  <link rel="stylesheet" href="style.css?v=3">
+  <link rel="stylesheet" href="style.css?v=6">
   
   <!-- Firebase App & Database Compat SDKs -->
   <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
@@ -835,12 +835,33 @@
     </div>
   </div>
 
+  <!-- EARLY VICTORY MODAL (FOR WINNER IN 3-4 PLAYER MATCH) -->
+  <div id="guerra-modal-early-win" class="modal-overlay">
+    <div class="modal-card" style="text-align: center; max-width: 440px; width: 92%;">
+      <div style="font-size: 52px; filter: drop-shadow(0 0 15px var(--accent-amber-glow));">🏆</div>
+      <h2 id="early-win-title" style="font-size: 24px; font-weight: 900; color: #fff; margin: 8px 0;">¡FELICIDADES!</h2>
+      <p id="early-win-subtitle" style="font-size: 14px; color: var(--text-muted); margin-bottom: 12px;"></p>
+      <div id="early-win-prize-box" style="background: rgba(245, 158, 11, 0.15); border: 1px solid var(--accent-amber); border-radius: var(--radius-md); padding: 10px 16px; margin-bottom: 16px;">
+        <span style="font-size: 18px;">🪙</span>
+        <span id="early-win-prize-amount" style="color: var(--accent-amber); font-size: 18px; font-weight: 900;"></span>
+      </div>
+      <div style="display: flex; flex-direction: column; gap: 10px;">
+        <button id="btn-early-exit" class="btn btn-emerald" style="padding: 12px; font-size: 15px; font-weight: 800;">
+          <span>🚪</span> Salir con mi Premio
+        </button>
+        <button id="btn-early-spectate" class="btn" style="padding: 10px; font-size: 13px;">
+          <span>👀</span> Quedarme Viendo (Modo Espectador)
+        </button>
+      </div>
+    </div>
+  </div>
+
   <!-- Toast Container -->
   <div id="toast-container" class="toast-container"></div>
 
 
   <!-- Scripts -->
-  <script src="firebase-config.js?v=3"></script>
-  <script src="guerra-game.js?v=3"></script>
+  <script src="firebase-config.js?v=6"></script>
+  <script src="guerra-game.js?v=6"></script>
 </body>
 </html>

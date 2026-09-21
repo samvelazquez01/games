@@ -81,11 +81,31 @@
     'coins'
   ];
 
+  const _memoryStore = {};
+  function safeStorageGet(key) {
+    try {
+      if (typeof localStorage !== 'undefined' && localStorage) {
+        const val = localStorage.getItem(key);
+        if (val !== null) return val;
+      }
+    } catch (e) {}
+    return _memoryStore[key] !== undefined ? _memoryStore[key] : null;
+  }
+
+  function safeStorageSet(key, val) {
+    try {
+      if (typeof localStorage !== 'undefined' && localStorage) {
+        localStorage.setItem(key, String(val));
+      }
+    } catch (e) {}
+    _memoryStore[key] = String(val);
+  }
+
   function getPlayerCoins() {
-    let stored = localStorage.getItem(COIN_STORAGE_KEY);
+    let stored = safeStorageGet(COIN_STORAGE_KEY);
     if (stored === null || isNaN(parseInt(stored, 10))) {
       for (let i = 0; i < LEGACY_COIN_KEYS.length; i++) {
-        const legacyVal = localStorage.getItem(LEGACY_COIN_KEYS[i]);
+        const legacyVal = safeStorageGet(LEGACY_COIN_KEYS[i]);
         if (legacyVal !== null && !isNaN(parseInt(legacyVal, 10)) && parseInt(legacyVal, 10) > 0) {
           stored = legacyVal;
           break;
@@ -93,19 +113,19 @@
       }
     }
     if (stored === null || isNaN(parseInt(stored, 10))) {
-      localStorage.setItem(COIN_STORAGE_KEY, DEFAULT_COINS.toString());
+      safeStorageSet(COIN_STORAGE_KEY, DEFAULT_COINS.toString());
       return DEFAULT_COINS;
     }
     const clean = Math.max(0, parseInt(stored, 10));
-    localStorage.setItem(COIN_STORAGE_KEY, clean.toString());
+    safeStorageSet(COIN_STORAGE_KEY, clean.toString());
     return clean;
   }
 
   function setPlayerCoins(amount) {
     const clean = Math.max(0, parseInt(amount, 10) || 0);
-    localStorage.setItem(COIN_STORAGE_KEY, clean.toString());
+    safeStorageSet(COIN_STORAGE_KEY, clean.toString());
     updateCoinsDisplay();
-    syncUserProfile({ coins: clean });
+    syncUserProfile({ coins: clean }).catch(() => {});
     return clean;
   }
 
@@ -115,8 +135,8 @@
   }
 
   function getPlayerStats() {
-    const wins = parseInt(localStorage.getItem(STATS_STORAGE_KEYS.WINS), 10) || 0;
-    const losses = parseInt(localStorage.getItem(STATS_STORAGE_KEYS.LOSSES), 10) || 0;
+    const wins = parseInt(safeStorageGet(STATS_STORAGE_KEYS.WINS), 10) || 0;
+    const losses = parseInt(safeStorageGet(STATS_STORAGE_KEYS.LOSSES), 10) || 0;
     return { wins, losses };
   }
 
@@ -124,9 +144,9 @@
     const { wins, losses } = getPlayerStats();
     const newWins = isWin ? wins + 1 : wins;
     const newLosses = isWin ? losses : losses + 1;
-    localStorage.setItem(STATS_STORAGE_KEYS.WINS, newWins.toString());
-    localStorage.setItem(STATS_STORAGE_KEYS.LOSSES, newLosses.toString());
-    syncUserProfile({ wins: newWins, losses: newLosses });
+    safeStorageSet(STATS_STORAGE_KEYS.WINS, newWins.toString());
+    safeStorageSet(STATS_STORAGE_KEYS.LOSSES, newLosses.toString());
+    syncUserProfile({ wins: newWins, losses: newLosses }).catch(() => {});
   }
 
   async function syncUserProfile(extra = {}) {
@@ -169,17 +189,17 @@
           const localCoins = getPlayerCoins();
           // Never downgrade coins on startup: preserve the highest between local and remote
           const bestCoins = Math.max(remoteCoins, localCoins);
-          localStorage.setItem(COIN_STORAGE_KEY, bestCoins.toString());
+          safeStorageSet(COIN_STORAGE_KEY, bestCoins.toString());
           updateCoinsDisplay();
         }
-        if (remoteData.name && !localStorage.getItem(PLAYER_STORAGE_KEYS.NAME)) {
-          localStorage.setItem(PLAYER_STORAGE_KEYS.NAME, remoteData.name);
+        if (remoteData.name && !safeStorageGet(PLAYER_STORAGE_KEYS.NAME)) {
+          safeStorageSet(PLAYER_STORAGE_KEYS.NAME, remoteData.name);
           if (DOM.inputNickname) DOM.inputNickname.value = remoteData.name;
         }
         if (remoteData.wins !== undefined) {
           const localStats = getPlayerStats();
-          localStorage.setItem(STATS_STORAGE_KEYS.WINS, Math.max(localStats.wins, remoteData.wins || 0).toString());
-          localStorage.setItem(STATS_STORAGE_KEYS.LOSSES, Math.max(localStats.losses, remoteData.losses || 0).toString());
+          safeStorageSet(STATS_STORAGE_KEYS.WINS, Math.max(localStats.wins, remoteData.wins || 0).toString());
+          safeStorageSet(STATS_STORAGE_KEYS.LOSSES, Math.max(localStats.losses, remoteData.losses || 0).toString());
         }
         await db.ref(`${RTDB_PATHS.USERS}/${uid}`).update({
           name: getPlayerName(),
@@ -216,7 +236,7 @@
         const localCoins = getPlayerCoins();
         const cleanServer = Math.max(0, parseInt(serverCoins, 10));
         if (cleanServer !== localCoins) {
-          localStorage.setItem(COIN_STORAGE_KEY, cleanServer.toString());
+          safeStorageSet(COIN_STORAGE_KEY, cleanServer.toString());
           updateCoinsDisplay();
           const diff = cleanServer - localCoins;
           if (diff !== 0) {
@@ -305,7 +325,7 @@
   }
 
   function isBonusClaimed() {
-    return localStorage.getItem(BONUS_CLAIMED_KEY) === 'true';
+    return safeStorageGet(BONUS_CLAIMED_KEY) === 'true';
   }
 
   function claimFreeCoinsBonus() {
@@ -504,20 +524,20 @@
   }
 
   function getPlayerUid() {
-    let uid = localStorage.getItem(PLAYER_STORAGE_KEYS.UID) || localStorage.getItem(PLAYER_STORAGE_KEYS.LEGACY_UID);
+    let uid = safeStorageGet(PLAYER_STORAGE_KEYS.UID) || safeStorageGet(PLAYER_STORAGE_KEYS.LEGACY_UID);
     if (!uid) {
       uid = 'usr_' + Math.random().toString(36).substring(2, 9) + Date.now().toString(36);
     }
-    localStorage.setItem(PLAYER_STORAGE_KEYS.UID, uid);
+    safeStorageSet(PLAYER_STORAGE_KEYS.UID, uid);
     return uid;
   }
 
   function getPlayerName() {
-    let name = localStorage.getItem(PLAYER_STORAGE_KEYS.NAME) || localStorage.getItem(PLAYER_STORAGE_KEYS.LEGACY_NAME);
+    let name = safeStorageGet(PLAYER_STORAGE_KEYS.NAME) || safeStorageGet(PLAYER_STORAGE_KEYS.LEGACY_NAME);
     if (!name) {
       name = 'Jugador ' + Math.floor(1000 + Math.random() * 9000);
     }
-    localStorage.setItem(PLAYER_STORAGE_KEYS.NAME, name);
+    safeStorageSet(PLAYER_STORAGE_KEYS.NAME, name);
     return name;
   }
 
@@ -817,18 +837,23 @@
 
   // --- FIREBASE AUTH HELPER ---
   async function ensureFirebaseAuth() {
-    const service = global.FirebaseService;
-    if (!service || !service.isConfigured()) return null;
-    service.initFirebase();
-    const auth = service.getAuth();
-    if (auth && !auth.currentUser) {
-      try {
-        await auth.signInAnonymously();
-      } catch (err) {
-        console.warn('Fallo auth anónima en Guerra:', err);
+    try {
+      const service = global.FirebaseService;
+      if (!service || !service.isConfigured()) return null;
+      service.initFirebase();
+      const auth = service.getAuth();
+      if (auth && !auth.currentUser) {
+        try {
+          await auth.signInAnonymously();
+        } catch (err) {
+          console.warn('Fallo auth anónima en Guerra:', err);
+        }
       }
+      return service.getDb();
+    } catch (e) {
+      console.warn('ensureFirebaseAuth notice:', e);
+      return null;
     }
-    return service.getDb();
   }
 
   // --- PUBLIC ROOMS DISCOVERY SYSTEM ---
@@ -2861,7 +2886,6 @@
     if (myPrivate && myPrivate.hand) {
       myPrivate.hand = sortCardsAscending(myPrivate.hand);
     }
-    const myPublic = players[myUid] || {};
     let myHand = (myPrivate && myPrivate.hand) || [];
     let myFaceUp = myPublic.faceUp || [];
     let myFaceDownCount = (myPrivate && myPrivate.faceDown) ? myPrivate.faceDown.length : (myPublic.faceDownCount || 0);
@@ -3900,14 +3924,16 @@
   // --- INITIALIZATION & EVENTS ---
 
   function initEvents() {
-    if (DOM.inputNickname) {
-      DOM.inputNickname.value = getPlayerName();
-      DOM.inputNickname.addEventListener('change', () => {
-        const clean = DOM.inputNickname.value.trim().substring(0, 20) || getPlayerName();
-        localStorage.setItem(PLAYER_STORAGE_KEYS.NAME, clean);
-        DOM.inputNickname.value = clean;
-        showToast(`Nombre actualizado: ${clean}`, '👤');
-      });
+    const inputNick = DOM.inputNickname || document.getElementById('guerra-nickname-input');
+    if (inputNick) {
+      inputNick.value = getPlayerName();
+      const onNameChange = () => {
+        const clean = inputNick.value.trim().substring(0, 20) || getPlayerName();
+        safeStorageSet(PLAYER_STORAGE_KEYS.NAME, clean);
+        inputNick.value = clean;
+      };
+      inputNick.addEventListener('change', onNameChange);
+      inputNick.addEventListener('blur', onNameChange);
     }
 
     // Bet selection modal controls in lobby
@@ -4421,12 +4447,44 @@
     });
   }
 
-  async function init() {
-    cacheDOM();
-    initEvents();
-    updateCoinsDisplay();
-    listenPublicRooms();
-    await initUserProfile();
+  let isInitialized = false;
+
+  function init() {
+    if (isInitialized) return;
+    isInitialized = true;
+
+    // 1. Core UI, event listeners, and coins display run IMMEDIATELY and synchronously
+    try {
+      cacheDOM();
+    } catch (e) {
+      console.warn('cacheDOM error:', e);
+    }
+
+    try {
+      initEvents();
+    } catch (e) {
+      console.warn('initEvents error:', e);
+    }
+
+    try {
+      updateCoinsDisplay();
+    } catch (e) {
+      console.warn('updateCoinsDisplay error:', e);
+    }
+
+    // 2. Firebase background calls (never block UI or freeze buttons)
+    setTimeout(() => {
+      try {
+        listenPublicRooms();
+      } catch (e) {
+        console.warn('listenPublicRooms notice:', e);
+      }
+      try {
+        initUserProfile();
+      } catch (e) {
+        console.warn('initUserProfile notice:', e);
+      }
+    }, 50);
   }
 
   const GuerraGame = {
@@ -4455,10 +4513,10 @@
     global.GuerraGame = GuerraGame;
   }
 
-  // Auto-initialize when loaded in browser
+  // Single clean auto-initialization
   if (typeof window !== 'undefined') {
     if (document.readyState === 'loading') {
-      document.addEventListener('DOMContentLoaded', () => GuerraGame.init());
+      window.addEventListener('DOMContentLoaded', () => GuerraGame.init());
     } else {
       GuerraGame.init();
     }

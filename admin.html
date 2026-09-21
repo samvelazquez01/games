@@ -1,0 +1,444 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>Panel de Administración - Guerra Online</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&family=JetBrains+Mono:wght@600;700;800;900&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="style.css">
+  
+  <!-- Firebase Compat SDKs -->
+  <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-auth-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-database-compat.js"></script>
+  <script src="firebase-config.js"></script>
+
+  <style>
+    body {
+      background: #0b0f19;
+      color: #f8fafc;
+      font-family: 'Inter', sans-serif;
+      margin: 0;
+      padding: 20px 12px;
+      display: flex;
+      justify-content: center;
+    }
+    .admin-container {
+      max-width: 960px;
+      width: 100%;
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+    }
+    .admin-header {
+      background: rgba(30, 41, 59, 0.75);
+      backdrop-filter: blur(12px);
+      border: 1px solid rgba(245, 158, 11, 0.4);
+      border-radius: var(--radius-lg);
+      padding: 16px 20px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 12px;
+    }
+    .stats-row {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+      gap: 12px;
+    }
+    .stat-box {
+      background: rgba(15, 23, 42, 0.8);
+      border: 1px solid rgba(51, 65, 85, 0.6);
+      border-radius: var(--radius-md);
+      padding: 14px 16px;
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+    .stat-label {
+      font-size: 11px;
+      text-transform: uppercase;
+      font-weight: 800;
+      color: var(--text-muted);
+      letter-spacing: 0.5px;
+    }
+    .stat-value {
+      font-size: 24px;
+      font-weight: 900;
+      font-family: var(--font-mono);
+      color: #fff;
+    }
+    .users-table-card {
+      background: rgba(15, 23, 42, 0.85);
+      border: 1px solid rgba(51, 65, 85, 0.6);
+      border-radius: var(--radius-lg);
+      padding: 16px;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+    .table-wrapper {
+      overflow-x: auto;
+      border-radius: var(--radius-sm);
+      border: 1px solid rgba(51, 65, 85, 0.5);
+    }
+    table.admin-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 13px;
+      text-align: left;
+    }
+    table.admin-table th {
+      background: #1e293b;
+      padding: 10px 12px;
+      font-weight: 800;
+      color: #94a3b8;
+      font-size: 11px;
+      text-transform: uppercase;
+      border-bottom: 1px solid rgba(51, 65, 85, 0.6);
+    }
+    table.admin-table td {
+      padding: 10px 12px;
+      border-bottom: 1px solid rgba(51, 65, 85, 0.3);
+      vertical-align: middle;
+    }
+    table.admin-table tr:hover {
+      background: rgba(245, 158, 11, 0.04);
+    }
+    .btn-action-pill {
+      padding: 4px 8px;
+      font-size: 11px;
+      font-weight: 800;
+      border-radius: 6px;
+      border: 1px solid rgba(255, 255, 255, 0.15);
+      background: rgba(255, 255, 255, 0.08);
+      color: #fff;
+      cursor: pointer;
+      transition: all 0.15s;
+    }
+    .btn-action-pill:hover {
+      background: rgba(245, 158, 11, 0.2);
+      border-color: #f59e0b;
+      color: #fbbf24;
+    }
+    .coins-input {
+      width: 90px;
+      padding: 5px 8px;
+      font-size: 13px;
+      font-family: var(--font-mono);
+      font-weight: 800;
+      background: rgba(0, 0, 0, 0.4);
+      border: 1px solid rgba(245, 158, 11, 0.4);
+      color: #fbbf24;
+      border-radius: 6px;
+      outline: none;
+    }
+    .coins-input:focus {
+      border-color: #f59e0b;
+      box-shadow: 0 0 8px rgba(245, 158, 11, 0.4);
+    }
+    .status-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 3px 8px;
+      border-radius: 9999px;
+      font-size: 11px;
+      font-weight: 800;
+    }
+    .badge-online {
+      background: rgba(16, 185, 129, 0.2);
+      color: #34d399;
+      border: 1px solid rgba(16, 185, 129, 0.4);
+    }
+    .badge-offline {
+      background: rgba(239, 68, 68, 0.2);
+      color: #f87171;
+      border: 1px solid rgba(239, 68, 68, 0.4);
+    }
+  </style>
+</head>
+<body>
+
+  <div class="admin-container">
+    
+    <!-- HEADER -->
+    <header class="admin-header">
+      <div style="display: flex; align-items: center; gap: 12px;">
+        <span style="font-size: 32px;">👑</span>
+        <div>
+          <h1 style="margin: 0; font-size: 20px; font-weight: 900; color: #fff; letter-spacing: 0.5px;">Panel de Administración</h1>
+          <p style="margin: 2px 0 0; font-size: 12px; color: var(--text-muted);">Gestión de Usuarios, Reembolsos y Monedas - Guerra Online</p>
+        </div>
+      </div>
+
+      <div style="display: flex; align-items: center; gap: 10px;">
+        <span id="admin-db-status" class="status-badge badge-offline">🔴 Desconectado</span>
+        <a href="index.html" class="btn" style="padding: 8px 14px; font-size: 12px; text-decoration: none;">
+          <span>🃏</span> Ir al Juego
+        </a>
+      </div>
+    </header>
+
+    <!-- STATS OVERVIEW -->
+    <div class="stats-row">
+      <div class="stat-box">
+        <span class="stat-label">👥 Usuarios Registrados</span>
+        <span id="stat-total-users" class="stat-value">0</span>
+      </div>
+      <div class="stat-box">
+        <span class="stat-label">🪙 Monedas en Circulación</span>
+        <span id="stat-total-coins" class="stat-value" style="color: var(--accent-amber);">0</span>
+      </div>
+      <div class="stat-box">
+        <span class="stat-label">🏆 Total de Partidas</span>
+        <span id="stat-total-matches" class="stat-value" style="color: #60a5fa;">0</span>
+      </div>
+    </div>
+
+    <!-- USERS TABLE -->
+    <div class="users-table-card">
+      <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px;">
+        <h2 style="margin: 0; font-size: 16px; font-weight: 800;">Lista de Jugadores</h2>
+        <div style="display: flex; gap: 8px; flex: 1; max-width: 380px;">
+          <input type="text" id="admin-search-input" class="text-input" placeholder="🔍 Buscar por nombre o UID..." style="padding: 8px 12px; font-size: 12px;">
+          <button id="admin-btn-refresh" class="btn btn-action-pill" style="padding: 0 12px; font-size: 14px;" title="Recargar">🔄</button>
+        </div>
+      </div>
+
+      <div class="table-wrapper">
+        <table class="admin-table">
+          <thead>
+            <tr>
+              <th>Nombre de Jugador</th>
+              <th>UID</th>
+              <th>🏆 V / ❌ D</th>
+              <th>Saldo Actual (🪙)</th>
+              <th>Acción Rápida de Reembolso</th>
+              <th style="text-align: right;">Guardar Saldo</th>
+            </tr>
+          </thead>
+          <tbody id="admin-users-tbody">
+            <tr>
+              <td colspan="6" style="text-align: center; padding: 30px; color: var(--text-muted);">
+                Conectando a Firebase y cargando usuarios...
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- Toast Container -->
+  <div id="toast-container" class="toast-container"></div>
+
+  <script>
+    (function () {
+      'use strict';
+
+      const USERS_PATH = 'guerra_v2_users';
+      let allUsers = {};
+      let db = null;
+
+      const DOM = {
+        dbStatus: document.getElementById('admin-db-status'),
+        statTotalUsers: document.getElementById('stat-total-users'),
+        statTotalCoins: document.getElementById('stat-total-coins'),
+        statTotalMatches: document.getElementById('stat-total-matches'),
+        usersTbody: document.getElementById('admin-users-tbody'),
+        searchInput: document.getElementById('admin-search-input'),
+        btnRefresh: document.getElementById('admin-btn-refresh')
+      };
+
+      function showToast(msg, icon = 'ℹ️') {
+        const c = document.getElementById('toast-container');
+        if (!c) return;
+        const t = document.createElement('div');
+        t.className = 'toast';
+        t.innerHTML = `<span>${icon}</span><span>${msg}</span>`;
+        c.appendChild(t);
+        setTimeout(() => {
+          t.style.opacity = '0';
+          setTimeout(() => t.remove(), 300);
+        }, 3500);
+      }
+
+      function initFirebase() {
+        if (!window.firebase || !window.FirebaseService) {
+          DOM.dbStatus.className = 'status-badge badge-offline';
+          DOM.dbStatus.textContent = '🔴 Firebase no disponible';
+          return;
+        }
+
+        try {
+          db = window.FirebaseService.getDb();
+          if (!db) {
+            window.FirebaseService.initFirebase();
+            db = window.FirebaseService.getDb();
+          }
+
+          if (db) {
+            DOM.dbStatus.className = 'status-badge badge-online';
+            DOM.dbStatus.textContent = '🟢 Conectado';
+            listenUsers();
+          } else {
+            DOM.dbStatus.className = 'status-badge badge-offline';
+            DOM.dbStatus.textContent = '🔴 Sin Conexión a BD';
+          }
+        } catch (e) {
+          console.error(e);
+          DOM.dbStatus.className = 'status-badge badge-offline';
+          DOM.dbStatus.textContent = '🔴 Error';
+        }
+      }
+
+      function listenUsers() {
+        if (!db) return;
+        const usersRef = db.ref(USERS_PATH);
+        usersRef.on('value', snap => {
+          allUsers = snap.val() || {};
+          renderTable();
+          updateStats();
+        });
+      }
+
+      function updateStats() {
+        const userList = Object.values(allUsers);
+        DOM.statTotalUsers.textContent = userList.length;
+
+        const totalCoins = userList.reduce((acc, u) => acc + (parseInt(u.coins, 10) || 0), 0);
+        DOM.statTotalCoins.textContent = totalCoins.toLocaleString() + ' 🪙';
+
+        const totalMatches = userList.reduce((acc, u) => acc + (parseInt(u.wins, 10) || 0) + (parseInt(u.losses, 10) || 0), 0);
+        DOM.statTotalMatches.textContent = totalMatches.toLocaleString();
+      }
+
+      function renderTable() {
+        const query = (DOM.searchInput.value || '').toLowerCase().trim();
+        const userEntries = Object.entries(allUsers).filter(([uid, u]) => {
+          if (!query) return true;
+          const name = (u.name || '').toLowerCase();
+          return name.includes(query) || uid.toLowerCase().includes(query);
+        });
+
+        if (userEntries.length === 0) {
+          DOM.usersTbody.innerHTML = `
+            <tr>
+              <td colspan="6" style="text-align: center; padding: 24px; color: var(--text-muted);">
+                ${Object.keys(allUsers).length === 0 ? 'No hay usuarios registrados aún en Firebase.' : 'No se encontraron jugadores que coincidan con la búsqueda.'}
+              </td>
+            </tr>
+          `;
+          return;
+        }
+
+        // Sort by coins descending
+        userEntries.sort((a, b) => (b[1].coins || 0) - (a[1].coins || 0));
+
+        DOM.usersTbody.innerHTML = userEntries.map(([uid, u]) => {
+          const coins = parseInt(u.coins, 10) || 0;
+          const wins = parseInt(u.wins, 10) || 0;
+          const losses = parseInt(u.losses, 10) || 0;
+
+          return `
+            <tr data-uid="${uid}">
+              <td style="font-weight: 700; color: #fff;">
+                ${u.name || 'Sin Nombre'}
+              </td>
+              <td style="font-family: var(--font-mono); font-size: 11px; color: #94a3b8;">
+                <span title="${uid}">${uid.substring(0, 10)}...</span>
+              </td>
+              <td style="font-family: var(--font-mono); font-size: 12px;">
+                <span style="color: var(--accent-emerald); font-weight: 800;">${wins}</span> / 
+                <span style="color: var(--accent-rose); font-weight: 800;">${losses}</span>
+              </td>
+              <td>
+                <input type="number" class="coins-input" value="${coins}" data-uid="${uid}" min="0" step="50">
+              </td>
+              <td>
+                <div style="display: flex; gap: 4px; flex-wrap: wrap;">
+                  <button class="btn-action-pill" onclick="quickAddCoins('${uid}', 500)">+500</button>
+                  <button class="btn-action-pill" onclick="quickAddCoins('${uid}', 1000)">+1k</button>
+                  <button class="btn-action-pill" onclick="quickAddCoins('${uid}', 5000)">+5k</button>
+                  <button class="btn-action-pill" onclick="quickAddCoins('${uid}', 100000)">+100k</button>
+                  <button class="btn-action-pill" onclick="quickAddCoins('${uid}', 1000000)">+1M</button>
+                  <button class="btn-action-pill" style="color: #fbbf24;" onclick="quickSetCoins('${uid}', 1000)">Reset 1k</button>
+                </div>
+              </td>
+              <td style="text-align: right;">
+                <button class="btn btn-emerald" style="padding: 4px 10px; font-size: 11px;" onclick="saveCoinsFromRow('${uid}')">
+                  💾 Guardar
+                </button>
+              </td>
+            </tr>
+          `;
+        }).join('');
+      }
+
+      window.quickAddCoins = async function (uid, delta) {
+        if (!db || !uid) return;
+        const current = (allUsers[uid] && parseInt(allUsers[uid].coins, 10)) || 0;
+        const newAmount = Math.max(0, current + delta);
+        try {
+          await db.ref(`${USERS_PATH}/${uid}/coins`).set(newAmount);
+          showToast(`Saldo de ${allUsers[uid]?.name || uid} aumentado a ${newAmount.toLocaleString()} 🪙`, '✅');
+        } catch (e) {
+          showToast('Error al actualizar saldo: ' + e.message, '❌');
+        }
+      };
+
+      window.quickSetCoins = async function (uid, exactAmount) {
+        if (!db || !uid) return;
+        try {
+          await db.ref(`${USERS_PATH}/${uid}/coins`).set(exactAmount);
+          showToast(`Saldo restablecido a ${exactAmount.toLocaleString()} 🪙`, '🔄');
+        } catch (e) {
+          showToast('Error al actualizar: ' + e.message, '❌');
+        }
+      };
+
+      window.saveCoinsFromRow = async function (uid) {
+        if (!db || !uid) return;
+        const input = document.querySelector(`.coins-input[data-uid="${uid}"]`);
+        if (!input) return;
+        const val = parseInt(input.value, 10);
+        if (isNaN(val) || val < 0) {
+          showToast('Ingresa una cantidad válida de monedas.', '⚠️');
+          return;
+        }
+        try {
+          await db.ref(`${USERS_PATH}/${uid}/coins`).set(val);
+          showToast(`Saldo de ${allUsers[uid]?.name || uid} guardado: ${val.toLocaleString()} 🪙`, '💾');
+        } catch (e) {
+          showToast('Error al guardar: ' + e.message, '❌');
+        }
+      };
+
+      DOM.searchInput.addEventListener('input', renderTable);
+      DOM.btnRefresh.addEventListener('click', () => {
+        if (db) {
+          db.ref(USERS_PATH).once('value').then(snap => {
+            allUsers = snap.val() || {};
+            renderTable();
+            updateStats();
+            showToast('Usuarios actualizados', '🔄');
+          });
+        }
+      });
+
+      // Init on load
+      if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', initFirebase);
+      } else {
+        initFirebase();
+      }
+
+    })();
+  </script>
+</body>
+</html>

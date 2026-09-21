@@ -1,16 +1,21 @@
 {
   "rules": {
-    "rooms": {
+    "guerra_v2_rooms": {
       "$roomId": {
         ".read": "auth != null",
         ".write": "auth != null"
       }
     },
-
-    "stop_rooms": {
+    "guerra_v2_public_rooms": {
+      ".read": "auth != null",
+      ".write": "auth != null"
+    },
+    "guerra_v2_private": {
       "$roomId": {
-        ".read": "auth != null",
-        ".write": "auth != null"
+        "$uid": {
+          ".read": "auth != null",
+          ".write": "auth != null"
+        }
       }
     },
 
@@ -20,12 +25,10 @@
         ".write": "auth != null"
       }
     },
-
     "guerra_public_rooms": {
       ".read": "auth != null",
       ".write": "auth != null"
     },
-
     "guerra_private": {
       "$roomId": {
         "$uid": {

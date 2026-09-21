@@ -24,11 +24,15 @@
     measurementId: "G-87RDDD85G9"
   };
 
-  const STORAGE_KEY = 'sudoku_firebase_custom_config';
+  const STORAGE_KEY = 'guerra_firebase_custom_config';
+  const LEGACY_STORAGE_KEY = 'sudoku_firebase_custom_config';
 
   function getStoredConfig() {
     try {
-      const stored = localStorage.getItem(STORAGE_KEY);
+      let stored = localStorage.getItem(STORAGE_KEY);
+      if (!stored) {
+        stored = localStorage.getItem(LEGACY_STORAGE_KEY);
+      }
       if (stored) {
         const parsed = JSON.parse(stored);
         if (parsed && (parsed.databaseURL || parsed.projectId)) {

@@ -25,12 +25,54 @@
 (function (global) {
   'use strict';
 
+  // --- RTDB ISOLATED NAMESPACE & KEYS ---
+  const RTDB_PATHS = {
+    ROOMS: 'guerra_v2_rooms',
+    PUBLIC_ROOMS: 'guerra_v2_public_rooms',
+    PRIVATE: 'guerra_v2_private',
+    USERS: 'guerra_v2_users'
+  };
+
+  const PLAYER_STORAGE_KEYS = {
+    UID: 'guerra_player_uid',
+    NAME: 'guerra_player_name',
+    LEGACY_UID: 'sudoku_player_uid',
+    LEGACY_NAME: 'sudoku_player_name'
+  };
+
+  const STATS_STORAGE_KEYS = {
+    WINS: 'guerra_player_wins',
+    LOSSES: 'guerra_player_losses'
+  };
+
   // --- COIN & CURRENCY SYSTEM ---
   const COIN_STORAGE_KEY = 'guerra_player_coins';
   const BONUS_CLAIMED_KEY = 'guerra_bonus_claimed';
   const DEFAULT_COINS = 1000;
-  let selectedBetAmount = 100;
+  let selectedBetAmount = null; // Sin apuesta predeterminada: el usuario debe seleccionar
+  let selectedGameMode = 'ffa'; // 'ffa' (Todos contra todos) or '2v2' (Por equipos)
   let payoutProcessedForMatch = null;
+
+  function formatCoinsCompact(num) {
+    if (num === null || num === undefined) return '';
+    const n = Number(num);
+    if (isNaN(n)) return String(num);
+
+    const sign = n < 0 ? '-' : '';
+    const abs = Math.abs(n);
+
+    if (abs >= 1000000) {
+      const m = abs / 1000000;
+      const str = (m % 1 === 0) ? m.toFixed(0) : parseFloat(m.toFixed(2)).toString();
+      return `${sign}${str}M`;
+    }
+    if (abs >= 100000) {
+      const k = abs / 1000;
+      const str = (k % 1 === 0) ? k.toFixed(0) : parseFloat(k.toFixed(2)).toString();
+      return `${sign}${str}k`;
+    }
+    return n.toLocaleString();
+  }
 
   function getPlayerCoins() {
     const stored = localStorage.getItem(COIN_STORAGE_KEY);
@@ -45,12 +87,85 @@
     const clean = Math.max(0, parseInt(amount, 10) || 0);
     localStorage.setItem(COIN_STORAGE_KEY, clean.toString());
     updateCoinsDisplay();
+    syncUserProfile({ coins: clean });
     return clean;
   }
 
   function addPlayerCoins(delta) {
     const current = getPlayerCoins();
     return setPlayerCoins(current + delta);
+  }
+
+  function getPlayerStats() {
+    const wins = parseInt(localStorage.getItem(STATS_STORAGE_KEYS.WINS), 10) || 0;
+    const losses = parseInt(localStorage.getItem(STATS_STORAGE_KEYS.LOSSES), 10) || 0;
+    return { wins, losses };
+  }
+
+  function recordPlayerMatchResult(isWin) {
+    const { wins, losses } = getPlayerStats();
+    const newWins = isWin ? wins + 1 : wins;
+    const newLosses = isWin ? losses : losses + 1;
+    localStorage.setItem(STATS_STORAGE_KEYS.WINS, newWins.toString());
+    localStorage.setItem(STATS_STORAGE_KEYS.LOSSES, newLosses.toString());
+    syncUserProfile({ wins: newWins, losses: newLosses });
+  }
+
+  async function syncUserProfile(extra = {}) {
+    const db = global.FirebaseService && global.FirebaseService.getDb();
+    const uid = getPlayerUid();
+    const name = getPlayerName();
+    const coins = getPlayerCoins();
+    const { wins, losses } = getPlayerStats();
+
+    const payload = {
+      uid,
+      name,
+      coins,
+      wins,
+      losses,
+      lastSeen: (global.firebase && global.firebase.database && global.firebase.database.ServerValue)
+        ? global.firebase.database.ServerValue.TIMESTAMP
+        : Date.now(),
+      ...extra
+    };
+
+    if (db && uid) {
+      try {
+        await db.ref(`${RTDB_PATHS.USERS}/${uid}`).update(payload);
+      } catch (e) {}
+    }
+  }
+
+  let userCoinsListenerRef = null;
+  function listenMyUserProfile() {
+    const db = global.FirebaseService && global.FirebaseService.getDb();
+    const uid = getPlayerUid();
+    if (!db || !uid) return;
+
+    if (userCoinsListenerRef) {
+      userCoinsListenerRef.off();
+      userCoinsListenerRef = null;
+    }
+
+    userCoinsListenerRef = db.ref(`${RTDB_PATHS.USERS}/${uid}/coins`);
+    userCoinsListenerRef.on('value', snap => {
+      const serverCoins = snap.val();
+      if (serverCoins !== null && serverCoins !== undefined && !isNaN(serverCoins)) {
+        const localCoins = getPlayerCoins();
+        const cleanServer = Math.max(0, parseInt(serverCoins, 10));
+        if (cleanServer !== localCoins) {
+          localStorage.setItem(COIN_STORAGE_KEY, cleanServer.toString());
+          updateCoinsDisplay();
+          const diff = cleanServer - localCoins;
+          if (diff !== 0) {
+            showToast(diff > 0 
+              ? `🪙 ¡El administrador ha abonado +${diff.toLocaleString()} monedas a tu cuenta!`
+              : `🪙 Saldo actualizado a ${cleanServer.toLocaleString()} monedas.`, '🪙');
+          }
+        }
+      }
+    });
   }
 
   const awardedPayouts = {};
@@ -79,9 +194,18 @@
     updateCoinsDisplay();
   }
 
-  function calculatePrizeForPlace(place, totalPlayers, bet) {
+  function calculatePrizeForPlace(place, totalPlayers, bet, room = null) {
     const pCount = totalPlayers || 4;
     const b = bet || 100;
+
+    // Team 2v2 Mode: The winning team splits the entire pot equally (50% each)
+    if (room && room.gameMode === '2v2') {
+      if (place === 1) {
+        return Math.floor((b * pCount) / 2); // Each winning teammate gets 50% of the pot
+      }
+      return 0;
+    }
+
     if (place === 1) {
       if (pCount >= 4) return 3 * b;
       if (pCount === 3) return 2 * b;
@@ -102,12 +226,12 @@
 
     const totalPlayers = (room && room.turnOrder ? room.turnOrder.length : (room && room.players ? Object.keys(room.players).length : 4));
     const bet = (room && room.betAmount) || 100;
-    const prize = calculatePrizeForPlace(place, totalPlayers, bet);
+    const prize = calculatePrizeForPlace(place, totalPlayers, bet, room);
 
     if (prize > 0) {
       addPlayerCoins(prize);
       CardAudio.win();
-      showToast(`¡Has ganado +${prize} 🪙 por el ${place}º lugar! 🏆`, '🪙');
+      showToast(`¡Has ganado +${prize} 🪙 por tu victoria! 🏆`, '🪙');
       updateCoinsDisplay();
     }
     return prize;
@@ -190,19 +314,6 @@
     return shuffle(deck);
   }
 
-  function getRandomCard() {
-    const suit = SUITS[Math.floor(Math.random() * SUITS.length)];
-    const rank = RANKS[Math.floor(Math.random() * RANKS.length)];
-    return {
-      id: `card_rnd_${Math.random().toString(36).substr(2, 6)}_${rank.label}_${suit.symbol}`,
-      rank: rank.label,
-      value: rank.value,
-      suit: suit.symbol,
-      color: suit.color,
-      name: `${rank.label}${suit.symbol}`
-    };
-  }
-
   function shuffle(arr) {
     const a = [...arr];
     for (let i = a.length - 1; i > 0; i--) {
@@ -215,6 +326,7 @@
   // Sound FX synthesizer for Cards
   const CardAudio = (function () {
     let ctx = null;
+    let soundEnabled = true;
     function getCtx() {
       if (!ctx && (window.AudioContext || window.webkitAudioContext)) {
         const AC = window.AudioContext || window.webkitAudioContext;
@@ -224,6 +336,7 @@
       return ctx;
     }
     function tone(freq, type = 'sine', duration = 0.08, gainVal = 0.15) {
+      if (!soundEnabled) return;
       try {
         const c = getCtx();
         if (!c) return;
@@ -240,6 +353,12 @@
       } catch (e) {}
     }
     return {
+      toggleSound: () => {
+        soundEnabled = !soundEnabled;
+        return soundEnabled;
+      },
+      isSoundEnabled: () => soundEnabled,
+      click: () => tone(600, 'sine', 0.03, 0.06),
       deal: () => tone(480, 'sine', 0.04, 0.08),
       playCard: () => tone(580, 'sine', 0.06, 0.12),
       burn: () => {
@@ -271,6 +390,7 @@
   let isSinglePlayerMode = false;
   let singlePlayerState = null;
   let aiTurnTimeout = null;
+  let openBetSelectorModal = () => {};
 
   const State = {
     myUid: null,
@@ -282,25 +402,36 @@
       faceDown: [],
       selectable6: []
     },
+    teammatePrivateCards: {
+      hand: [],
+      faceDown: []
+    },
     botPrivateData: {},
     room: null
   };
 
+  function getTeammateUid(room, playerUid) {
+    if (!room || room.gameMode !== '2v2' || !room.players) return null;
+    const player = room.players[playerUid];
+    if (!player || !player.team) return null;
+    return Object.keys(room.players).find(id => id !== playerUid && room.players[id].team === player.team) || null;
+  }
+
   function getPlayerUid() {
-    let uid = localStorage.getItem('sudoku_player_uid');
+    let uid = localStorage.getItem(PLAYER_STORAGE_KEYS.UID) || localStorage.getItem(PLAYER_STORAGE_KEYS.LEGACY_UID);
     if (!uid) {
       uid = 'usr_' + Math.random().toString(36).substring(2, 9) + Date.now().toString(36);
-      localStorage.setItem('sudoku_player_uid', uid);
     }
+    localStorage.setItem(PLAYER_STORAGE_KEYS.UID, uid);
     return uid;
   }
 
   function getPlayerName() {
-    let name = localStorage.getItem('sudoku_player_name');
+    let name = localStorage.getItem(PLAYER_STORAGE_KEYS.NAME) || localStorage.getItem(PLAYER_STORAGE_KEYS.LEGACY_NAME);
     if (!name) {
       name = 'Jugador ' + Math.floor(1000 + Math.random() * 9000);
-      localStorage.setItem('sudoku_player_name', name);
     }
+    localStorage.setItem(PLAYER_STORAGE_KEYS.NAME, name);
     return name;
   }
 
@@ -437,7 +568,16 @@
     DOM.btnJoinRoom = document.getElementById('guerra-btn-join-room');
     DOM.btnGameRules = document.getElementById('guerra-btn-game-rules');
     DOM.btnRefillCoins = document.getElementById('guerra-btn-refill-coins');
-    DOM.betButtons = document.querySelectorAll('#guerra-bet-selector .btn-toggle-option');
+    DOM.btnOpenBetSelector = document.getElementById('guerra-btn-open-bet-selector');
+    DOM.modalBetSelector = document.getElementById('modal-bet-selector');
+    DOM.btnCloseBetSelector = document.getElementById('btn-close-bet-selector');
+    DOM.btnCloseBetSelectorX = document.getElementById('btn-close-bet-selector-x');
+    DOM.betOptionsContainer = document.getElementById('guerra-bet-options-container');
+    DOM.selectedBetDisplay = document.getElementById('guerra-selected-bet-display');
+    DOM.selectedBetSubtext = document.getElementById('guerra-selected-bet-subtext');
+    DOM.betStatusHint = document.getElementById('guerra-bet-status-hint');
+    DOM.betModalUserCoins = document.getElementById('bet-modal-user-coins');
+    DOM.modeCards = document.querySelectorAll('#guerra-mode-selector .mode-card');
 
     DOM.displayRoomCode = document.getElementById('guerra-display-room-code');
     DOM.btnCopyCode = document.getElementById('guerra-btn-copy-code');
@@ -445,6 +585,11 @@
     DOM.waitingPlayersList = document.getElementById('guerra-waiting-players-list');
     DOM.waitingPlayersCount = document.getElementById('guerra-waiting-players-count');
     DOM.waitingBetBadge = document.getElementById('guerra-waiting-bet-badge');
+    DOM.waitingModeBadge = document.getElementById('guerra-waiting-mode-badge');
+    DOM.waitingBotControls = document.getElementById('guerra-waiting-bot-controls');
+    DOM.btnAddBot = document.getElementById('guerra-btn-add-bot');
+    DOM.btnRemoveBot = document.getElementById('guerra-btn-remove-bot');
+    DOM.teamInstruction = document.getElementById('guerra-team-instruction');
     DOM.btnHostStart = document.getElementById('guerra-btn-host-start');
     DOM.btnLeaveWaiting = document.getElementById('guerra-btn-leave-waiting');
 
@@ -495,6 +640,31 @@
     DOM.resultsTableBody = document.getElementById('guerra-results-table-body');
     DOM.btnPlayAgain = document.getElementById('guerra-btn-play-again');
     DOM.btnReturnMenu = document.getElementById('guerra-btn-return-menu');
+
+    // Header actions & modals
+    DOM.btnHeaderRules = document.getElementById('btn-rules');
+    DOM.btnHeaderSound = document.getElementById('btn-sound');
+    DOM.btnHeaderSettings = document.getElementById('btn-settings');
+
+    DOM.modalRules = document.getElementById('modal-game-rules');
+    DOM.btnCloseRules = document.getElementById('btn-close-rules');
+
+    DOM.modalSettings = document.getElementById('modal-settings');
+    DOM.btnCloseSettings = document.getElementById('btn-close-settings');
+    DOM.btnSaveSettings = document.getElementById('btn-save-settings');
+    DOM.inputApiKey = document.getElementById('setting-api-key');
+    DOM.inputDbUrl = document.getElementById('setting-db-url');
+    DOM.inputProjectId = document.getElementById('setting-project-id');
+
+    // Ranking Elements
+    DOM.btnRanking = document.getElementById('btn-ranking');
+    DOM.btnViewRanking = document.getElementById('guerra-btn-view-ranking');
+    DOM.modalRanking = document.getElementById('modal-ranking');
+    DOM.btnCloseRanking = document.getElementById('btn-close-ranking');
+    DOM.btnCloseRankingX = document.getElementById('btn-close-ranking-x');
+    DOM.rankingSearchInput = document.getElementById('ranking-search-input');
+    DOM.rankingTableBody = document.getElementById('ranking-table-body');
+    DOM.rankingTotalPlayersCount = document.getElementById('ranking-total-players-count');
   }
 
   // --- FIREBASE AUTH HELPER ---
@@ -530,7 +700,7 @@
         publicRoomsRef.off();
       }
 
-      publicRoomsRef = db.ref('guerra_public_rooms');
+      publicRoomsRef = db.ref(RTDB_PATHS.PUBLIC_ROOMS);
       publicRoomsRef.on('value', snap => {
         const roomsMap = snap.val() || {};
         renderPublicRoomsList(roomsMap);
@@ -579,7 +749,7 @@
               <span>${escapeHTML(room.creatorName || 'Anfitrión')}</span>
             </div>
             <div class="public-room-meta">
-              <span class="public-room-bet">🪙 ${bet}</span>
+              <span class="public-room-bet">🪙 ${formatCoinsCompact(bet)}</span>
               <span class="public-room-players">👥 ${pCount}/4 Jugadores</span>
             </div>
           </div>
@@ -704,12 +874,16 @@
   async function createRoom(isPublic = true) {
     const uid = getPlayerUid();
     const name = getPlayerName();
-    const roomId = generateRoomCode();
+    if (!selectedBetAmount || isNaN(selectedBetAmount) || selectedBetAmount <= 0) {
+      if (typeof openBetSelectorModal === 'function') openBetSelectorModal();
+      throw new Error('Debes seleccionar un monto de apuesta antes de crear la sala.');
+    }
     const bet = selectedBetAmount;
+    const roomId = generateRoomCode();
 
     // Verify balance
     if (getPlayerCoins() < bet) {
-      throw new Error(`Saldo insuficiente (${getPlayerCoins()} 🪙). Necesitas ${bet} 🪙 para crear esta sala. Ajusta la apuesta o reclama el bono.`);
+      throw new Error(`Saldo insuficiente (${getPlayerCoins().toLocaleString()} 🪙). Necesitas ${formatCoinsCompact(bet)} 🪙 para crear esta sala. Ajusta la apuesta o reclama el bono.`);
     }
 
     const service = global.FirebaseService;
@@ -733,13 +907,14 @@
     }
 
     isSinglePlayerMode = false;
-    const roomRef = db.ref('guerra_rooms/' + roomId);
+    const roomRef = db.ref(`${RTDB_PATHS.ROOMS}/${roomId}`);
     currentRoomRef = roomRef;
 
     const initialPayload = {
       id: roomId,
       creatorId: uid,
       isPublic: !!isPublic,
+      gameMode: selectedGameMode || 'ffa',
       betAmount: bet,
       totalPot: bet,
       status: 'WAITING',
@@ -762,6 +937,7 @@
           setupReady: false,
           isFinished: false,
           finishPlace: null,
+          team: selectedGameMode === '2v2' ? 'blue' : null,
           joinedAt: global.firebase.database.ServerValue.TIMESTAMP
         }
       },
@@ -772,12 +948,13 @@
 
     if (isPublic) {
       try {
-        const pubRef = db.ref('guerra_public_rooms/' + roomId);
+        const pubRef = db.ref(`${RTDB_PATHS.PUBLIC_ROOMS}/${roomId}`);
         await pubRef.set({
           id: roomId,
           creatorName: name,
           creatorId: uid,
           betAmount: bet,
+          gameMode: selectedGameMode || 'ffa',
           playerCount: 1,
           status: 'WAITING',
           createdAt: global.firebase.database.ServerValue.TIMESTAMP
@@ -806,7 +983,7 @@
     if (!db) {
       throw new Error('No se pudo conectar a la base de datos de Firebase.');
     }
-    const roomRef = db.ref('guerra_rooms/' + cleanCode);
+    const roomRef = db.ref(`${RTDB_PATHS.ROOMS}/${cleanCode}`);
     const snap = await roomRef.once('value');
     const room = snap.val();
 
@@ -816,7 +993,7 @@
 
     const bet = room.betAmount || 100;
     if (getPlayerCoins() < bet) {
-      throw new Error(`Saldo insuficiente (${getPlayerCoins()} 🪙). Esta sala requiere una apuesta de ${bet} 🪙.`);
+      throw new Error(`Saldo insuficiente (${getPlayerCoins().toLocaleString()} 🪙). Esta sala requiere una apuesta de ${formatCoinsCompact(bet)} 🪙 (${bet.toLocaleString()} monedas).`);
     }
 
     if (room.status !== 'WAITING') {
@@ -838,6 +1015,13 @@
       throw new Error('La sala ya tiene el límite máximo de 4 jugadores.');
     }
 
+    let assignedTeam = null;
+    if (room.gameMode === '2v2') {
+      const blueCount = Object.values(currentPlayers).filter(p => p.team === 'blue').length;
+      const redCount = Object.values(currentPlayers).filter(p => p.team === 'red').length;
+      assignedTeam = blueCount <= redCount ? 'blue' : 'red';
+    }
+
     const playerPayload = {
       id: uid,
       name: name,
@@ -849,6 +1033,7 @@
       setupReady: false,
       isFinished: false,
       finishPlace: null,
+      team: assignedTeam,
       joinedAt: global.firebase.database.ServerValue.TIMESTAMP
     };
 
@@ -860,7 +1045,7 @@
 
     if (room.isPublic) {
       try {
-        const pubRef = db.ref('guerra_public_rooms/' + cleanCode);
+        const pubRef = db.ref(`${RTDB_PATHS.PUBLIC_ROOMS}/${cleanCode}`);
         pubRef.update({
           playerCount: count + 1,
           status: (count + 1 >= 4) ? 'FULL' : 'WAITING'
@@ -885,6 +1070,7 @@
       id: roomId,
       creatorId: uid,
       isPublic: !!isPublic,
+      gameMode: selectedGameMode || 'ffa',
       betAmount: bet,
       totalPot: bet * 4,
       status: 'WAITING',
@@ -907,7 +1093,8 @@
           faceDownCount: 0,
           setupReady: false,
           isFinished: false,
-          finishPlace: null
+          finishPlace: null,
+          team: selectedGameMode === '2v2' ? 'blue' : null
         }
       },
       privateData: {
@@ -916,6 +1103,164 @@
       winners: []
     };
   }
+
+  // --- BOT MANAGEMENT & TEAM SELECTION IN WAITING ROOM ---
+
+  async function addBotToWaitingRoom() {
+    if (!State.isCreator) return;
+    const room = isSinglePlayerMode ? singlePlayerState : State.room;
+    if (!room || room.status !== 'WAITING') return;
+
+    const currentPlayers = room.players || {};
+    const count = Object.keys(currentPlayers).length;
+    if (count >= 4) {
+      showToast('La sala ya tiene el límite máximo de 4 jugadores.', '⚠️');
+      return;
+    }
+
+    let botNum = 1;
+    while (currentPlayers[`bot_${botNum}`]) {
+      botNum++;
+    }
+    const botId = `bot_${botNum}`;
+    const botNames = ['Bot Alfa 🤖', 'Bot Beta 🤖', 'Bot Gamma 🤖', 'Bot Omega 🤖'];
+    const botName = botNames[botNum - 1] || `Bot ${botNum} 🤖`;
+
+    let botTeam = null;
+    if (room.gameMode === '2v2') {
+      const blueCount = Object.values(currentPlayers).filter(p => p.team === 'blue').length;
+      const redCount = Object.values(currentPlayers).filter(p => p.team === 'red').length;
+      botTeam = blueCount <= redCount ? 'blue' : 'red';
+    }
+
+    const botPayload = {
+      id: botId,
+      name: botName,
+      isAI: true,
+      connected: true,
+      faceUp: [],
+      handCount: 0,
+      faceDownCount: 0,
+      setupReady: true,
+      isFinished: false,
+      finishPlace: null,
+      team: botTeam
+    };
+
+    if (isSinglePlayerMode) {
+      singlePlayerState.players[botId] = botPayload;
+      if (!singlePlayerState.turnOrder.includes(botId)) {
+        singlePlayerState.turnOrder.push(botId);
+      }
+      renderWaitingRoom(singlePlayerState);
+      showToast(`Se añadió ${botName}`, '🤖');
+      return;
+    }
+
+    try {
+      const db = global.FirebaseService.getDb();
+      if (db && currentRoomRef) {
+        const turnOrder = room.turnOrder || [];
+        if (!turnOrder.includes(botId)) turnOrder.push(botId);
+
+        await currentRoomRef.child(`players/${botId}`).set(botPayload);
+        await currentRoomRef.child('turnOrder').set(turnOrder);
+
+        if (room.isPublic) {
+          const pubRef = db.ref(`${RTDB_PATHS.PUBLIC_ROOMS}/${currentRoomId}`);
+          pubRef.update({
+            playerCount: count + 1,
+            status: (count + 1 >= 4) ? 'FULL' : 'WAITING'
+          }).catch(() => {});
+        }
+        showToast(`Se añadió ${botName} a la sala`, '🤖');
+      }
+    } catch (e) {
+      console.warn('Error añadiendo bot:', e);
+    }
+  }
+
+  async function removeBotFromWaitingRoom() {
+    if (!State.isCreator) return;
+    const room = isSinglePlayerMode ? singlePlayerState : State.room;
+    if (!room || room.status !== 'WAITING') return;
+
+    const currentPlayers = room.players || {};
+    const botEntries = Object.entries(currentPlayers).filter(([id, p]) => p.isAI);
+    if (botEntries.length === 0) {
+      showToast('No hay bots para retirar de la sala.', 'ℹ️');
+      return;
+    }
+
+    const [lastBotId, lastBot] = botEntries[botEntries.length - 1];
+
+    if (isSinglePlayerMode) {
+      delete singlePlayerState.players[lastBotId];
+      singlePlayerState.turnOrder = (singlePlayerState.turnOrder || []).filter(id => id !== lastBotId);
+      renderWaitingRoom(singlePlayerState);
+      showToast(`Se retiró ${lastBot.name}`, 'ℹ️');
+      return;
+    }
+
+    try {
+      const db = global.FirebaseService.getDb();
+      if (db && currentRoomRef) {
+        const turnOrder = (room.turnOrder || []).filter(id => id !== lastBotId);
+        const count = Object.keys(currentPlayers).length;
+
+        await currentRoomRef.child(`players/${lastBotId}`).remove();
+        await currentRoomRef.child('turnOrder').set(turnOrder);
+
+        if (room.isPublic) {
+          const pubRef = db.ref(`${RTDB_PATHS.PUBLIC_ROOMS}/${currentRoomId}`);
+          pubRef.update({
+            playerCount: Math.max(1, count - 1),
+            status: 'WAITING'
+          }).catch(() => {});
+        }
+        showToast(`Se retiró ${lastBot.name}`, 'ℹ️');
+      }
+    } catch (e) {
+      console.warn('Error quitando bot:', e);
+    }
+  }
+
+  async function togglePlayerTeam(playerId) {
+    const room = isSinglePlayerMode ? singlePlayerState : State.room;
+    if (!room || room.status !== 'WAITING' || room.gameMode !== '2v2') return;
+
+    const targetUid = playerId || State.myUid;
+    if (targetUid !== State.myUid && !State.isCreator) return;
+
+    const player = room.players && room.players[targetUid];
+    if (!player) return;
+
+    const currentTeam = player.team || 'blue';
+    const newTeam = currentTeam === 'blue' ? 'red' : 'blue';
+
+    // Verify team capacity (max 2 players per team in 4-player game)
+    const playersInNewTeam = Object.values(room.players).filter(p => p.id !== targetUid && p.team === newTeam).length;
+    if (playersInNewTeam >= 2) {
+      showToast(`El equipo ${newTeam === 'blue' ? 'Azul' : 'Rojo'} ya tiene 2 jugadores.`, '⚠️');
+      return;
+    }
+
+    if (isSinglePlayerMode) {
+      player.team = newTeam;
+      renderWaitingRoom(singlePlayerState);
+      return;
+    }
+
+    try {
+      if (currentRoomRef) {
+        await currentRoomRef.child(`players/${targetUid}/team`).set(newTeam);
+      }
+    } catch (e) {
+      console.warn('Error cambiando equipo:', e);
+    }
+  }
+
+  global.togglePlayerTeam = togglePlayerTeam;
 
   // --- START GAME WORKFLOW & DEALING ---
 
@@ -934,50 +1279,113 @@
 
     const bet = room.betAmount || selectedBetAmount || 100;
     if (getPlayerCoins() < bet) {
-      showToast(`No tienes suficientes monedas (${getPlayerCoins()} 🪙) para la apuesta de ${bet} 🪙.`, '❌');
+      showToast(`No tienes suficientes monedas (${getPlayerCoins().toLocaleString()} 🪙) para la apuesta de ${formatCoinsCompact(bet)} 🪙 (${bet.toLocaleString()} monedas).`, '❌');
       return;
     }
 
     const players = room.players || {};
     const playerIds = Object.keys(players);
     const realPlayerCount = playerIds.length;
+    const isTeamMode = (room.gameMode === '2v2');
 
     const deck = createDeck();
     const finalPlayers = { ...players };
-    const turnOrder = [...playerIds];
+    const botNames = ['Bot Alfa 🤖', 'Bot Beta 🤖', 'Bot Gamma 🤖', 'Bot Omega 🤖'];
 
-    // If exactly 1 real player -> create 3 AI bots!
+    // Auto-fill bots if needed
     if (realPlayerCount === 1) {
-      const botNames = ['Bot Alfa 🤖', 'Bot Beta 🤖', 'Bot Gamma 🤖'];
       for (let i = 0; i < 3; i++) {
         const botId = `bot_${i + 1}`;
-        turnOrder.push(botId);
-        finalPlayers[botId] = {
-          id: botId,
-          name: botNames[i],
-          isAI: true,
-          connected: true,
-          faceUp: [],
-          handCount: 3,
-          faceDownCount: 3,
-          setupReady: true,
-          isFinished: false,
-          finishPlace: null
-        };
+        if (!finalPlayers[botId]) {
+          finalPlayers[botId] = {
+            id: botId,
+            name: botNames[i],
+            isAI: true,
+            connected: true,
+            faceUp: [],
+            handCount: 3,
+            faceDownCount: 3,
+            setupReady: true,
+            isFinished: false,
+            finishPlace: null,
+            team: null
+          };
+        }
+      }
+    } else if (isTeamMode && Object.keys(finalPlayers).length < 4) {
+      let bIdx = 0;
+      while (Object.keys(finalPlayers).length < 4) {
+        const botId = `bot_${bIdx + 1}`;
+        if (!finalPlayers[botId]) {
+          finalPlayers[botId] = {
+            id: botId,
+            name: botNames[bIdx] || `Bot ${bIdx + 1} 🤖`,
+            isAI: true,
+            connected: true,
+            faceUp: [],
+            handCount: 3,
+            faceDownCount: 3,
+            setupReady: true,
+            isFinished: false,
+            finishPlace: null,
+            team: null
+          };
+        }
+        bIdx++;
       }
     }
 
-    // 🎲 Completely randomize turn order and select initial starting player without preference
-    const shuffledTurnOrder = shuffle(turnOrder);
-    const randomStartIdx = Math.floor(Math.random() * shuffledTurnOrder.length);
-    const startingPlayerUid = shuffledTurnOrder[randomStartIdx];
+    // Determine randomized seating and turn rotation
+    let shuffledTurnOrder = [];
+    let randomStartIdx = 0;
+    let startingPlayerUid = null;
+
+    if (isTeamMode) {
+      // Balance teams: exactly 2 Blue and 2 Red
+      const allIds = Object.keys(finalPlayers);
+      let blueTeam = allIds.filter(id => finalPlayers[id].team === 'blue');
+      let redTeam = allIds.filter(id => finalPlayers[id].team === 'red');
+
+      allIds.forEach(id => {
+        if (!finalPlayers[id].team) {
+          if (blueTeam.length < 2) {
+            finalPlayers[id].team = 'blue';
+            blueTeam.push(id);
+          } else {
+            finalPlayers[id].team = 'red';
+            redTeam.push(id);
+          }
+        }
+      });
+
+      // Ensure equal counts
+      while (blueTeam.length > 2) redTeam.push(blueTeam.pop());
+      while (redTeam.length > 2) blueTeam.push(redTeam.pop());
+      blueTeam.forEach(id => { finalPlayers[id].team = 'blue'; });
+      redTeam.forEach(id => { finalPlayers[id].team = 'red'; });
+
+      const shufBlue = shuffle(blueTeam);
+      const shufRed = shuffle(redTeam);
+      const coin = Math.random() < 0.5;
+
+      shuffledTurnOrder = coin
+        ? [shufBlue[0], shufRed[0], shufBlue[1], shufRed[1]]
+        : [shufRed[0], shufBlue[0], shufRed[1], shufBlue[1]];
+
+      randomStartIdx = 0;
+      startingPlayerUid = shuffledTurnOrder[0];
+    } else {
+      shuffledTurnOrder = shuffle(Object.keys(finalPlayers));
+      randomStartIdx = Math.floor(Math.random() * shuffledTurnOrder.length);
+      startingPlayerUid = shuffledTurnOrder[randomStartIdx];
+    }
 
     const totalPot = bet * shuffledTurnOrder.length;
     const matchId = `m_${currentRoomId}_${Date.now()}_${Math.random().toString(36).substr(2, 4)}`;
 
     const db = global.FirebaseService.getDb();
     if (db) {
-      db.ref('guerra_public_rooms/' + currentRoomId).remove().catch(() => {});
+      db.ref(`${RTDB_PATHS.PUBLIC_ROOMS}/${currentRoomId}`).remove().catch(() => {});
     }
 
     const privateUpdates = {};
@@ -1006,7 +1414,7 @@
           faceDown: faceDown
         };
 
-        privateUpdates[`guerra_private/${currentRoomId}/${pid}`] = {
+        privateUpdates[`${RTDB_PATHS.PRIVATE}/${currentRoomId}/${pid}`] = {
           hand: privateHand,
           faceDown: faceDown
         };
@@ -1015,7 +1423,7 @@
         finalPlayers[pid].handCount = 3;
         finalPlayers[pid].setupReady = false;
 
-        privateUpdates[`guerra_private/${currentRoomId}/${pid}`] = {
+        privateUpdates[`${RTDB_PATHS.PRIVATE}/${currentRoomId}/${pid}`] = {
           hand: [],
           faceDown: faceDown,
           selectable6: sortCardsAscending(selectable6)
@@ -1044,7 +1452,9 @@
       turnOrder: shuffledTurnOrder,
       currentTurnIndex: randomStartIdx,
       activePlayerUid: startingPlayerUid,
-      winners: []
+      botPrivate: State.botPrivateData,
+      winners: [],
+      winningTeam: null
     });
   }
 
@@ -1052,6 +1462,7 @@
     const uid = State.myUid;
     const name = getPlayerName();
     const bet = singlePlayerState.betAmount || selectedBetAmount || 100;
+    const isTeamMode = (singlePlayerState.gameMode === '2v2');
 
     if (getPlayerCoins() < bet) {
       showToast(`No tienes suficientes monedas (${getPlayerCoins()} 🪙) para la apuesta de ${bet} 🪙.`, '❌');
@@ -1059,19 +1470,11 @@
     }
 
     const deck = createDeck();
-    const turnOrder = shuffle([uid, 'bot_1', 'bot_2', 'bot_3']);
-    const randomStartIdx = Math.floor(Math.random() * turnOrder.length);
-    const startingPlayerUid = turnOrder[randomStartIdx];
     const botNames = ['Bot Alfa 🤖', 'Bot Beta 🤖', 'Bot Gamma 🤖'];
     const totalPot = bet * 4;
     const matchId = `m_local_${Date.now()}_${Math.random().toString(36).substr(2, 4)}`;
 
     singlePlayerState.matchId = matchId;
-    singlePlayerState.turnOrder = turnOrder;
-    singlePlayerState.currentTurnIndex = randomStartIdx;
-    singlePlayerState.activePlayerUid = startingPlayerUid;
-    ensureBetDeducted(singlePlayerState);
-
     singlePlayerState.players = {
       [uid]: {
         id: uid,
@@ -1083,7 +1486,8 @@
         faceDownCount: 3,
         setupReady: false,
         isFinished: false,
-        finishPlace: null
+        finishPlace: null,
+        team: isTeamMode ? 'blue' : null
       }
     };
 
@@ -1109,6 +1513,12 @@
       const botFaceUp = [bot6[0], bot6[1], bot6[2]];
       const botHand = sortCardsAscending([bot6[3], bot6[4], bot6[5]]);
 
+      // In 2v2 Solo mode: Tú + Bot Alfa = Blue Team vs Bot Beta + Bot Gamma = Red Team
+      let bTeam = null;
+      if (isTeamMode) {
+        bTeam = (i === 0) ? 'blue' : 'red';
+      }
+
       singlePlayerState.players[bid] = {
         id: bid,
         name: botNames[i],
@@ -1119,7 +1529,8 @@
         faceDownCount: 3,
         setupReady: true,
         isFinished: false,
-        finishPlace: null
+        finishPlace: null,
+        team: bTeam
       };
 
       singlePlayerState.privateData[bid] = {
@@ -1128,6 +1539,27 @@
       };
     }
 
+    let turnOrder = [];
+    let randomStartIdx = 0;
+    let startingPlayerUid = null;
+
+    if (isTeamMode) {
+      // Blue: [uid, bot_1], Red: [bot_2, bot_3]
+      const coin = Math.random() < 0.5;
+      turnOrder = coin ? [uid, 'bot_2', 'bot_1', 'bot_3'] : ['bot_2', 'bot_1', 'bot_3', uid];
+      randomStartIdx = 0;
+      startingPlayerUid = turnOrder[0];
+    } else {
+      turnOrder = shuffle([uid, 'bot_1', 'bot_2', 'bot_3']);
+      randomStartIdx = Math.floor(Math.random() * turnOrder.length);
+      startingPlayerUid = turnOrder[randomStartIdx];
+    }
+
+    singlePlayerState.turnOrder = turnOrder;
+    singlePlayerState.currentTurnIndex = randomStartIdx;
+    singlePlayerState.activePlayerUid = startingPlayerUid;
+    ensureBetDeducted(singlePlayerState);
+
     await playDealingAnimation(['Tú', ...botNames]);
 
     singlePlayerState.status = 'SETUP';
@@ -1135,8 +1567,8 @@
     singlePlayerState.totalPot = totalPot;
     singlePlayerState.deck = deck;
     singlePlayerState.deckCount = deck.length;
-    singlePlayerState.turnOrder = turnOrder;
     singlePlayerState.winners = [];
+    singlePlayerState.winningTeam = null;
 
     renderSetupView(singlePlayerState, uid);
   }
@@ -1273,7 +1705,7 @@
       try {
         const db = global.FirebaseService.getDb();
         if (db && currentRoomId) {
-          db.ref(`guerra_private/${currentRoomId}/${myUid}`).set({
+          db.ref(`${RTDB_PATHS.PRIVATE}/${currentRoomId}/${myUid}`).set({
             hand: privateHand,
             faceDown: State.myPrivateCards.faceDown || []
           }).catch(err => console.warn('Private cards save warning:', err));
@@ -1301,7 +1733,7 @@
     try {
       const db = global.FirebaseService.getDb();
       if (db && currentRoomId) {
-        db.ref(`guerra_private/${currentRoomId}/${myUid}`).set({
+        db.ref(`${RTDB_PATHS.PRIVATE}/${currentRoomId}/${myUid}`).set({
           hand: privateHand,
           faceDown: State.myPrivateCards.faceDown || []
         }).catch(err => console.warn('Private cards save warning:', err));
@@ -1373,8 +1805,31 @@
       return;
     }
 
-    const privateInfo = isSinglePlayerMode ? singlePlayerState.privateData[State.myUid] : State.myPrivateCards;
-    const faceDown = privateInfo.faceDown || [];
+    let targetUid = State.myUid;
+    if (room.gameMode === '2v2') {
+      const myP = room.players && room.players[State.myUid];
+      const myRem = ((myP && myP.handCount) || 0) + ((myP && myP.faceUp && myP.faceUp.length) || 0) + ((myP && myP.faceDownCount) || 0);
+      if (myRem === 0) {
+        const tUid = getTeammateUid(room, State.myUid);
+        if (tUid) targetUid = tUid;
+      }
+    }
+
+    let privateInfo;
+    if (isSinglePlayerMode) {
+      privateInfo = singlePlayerState.privateData[targetUid];
+    } else if (targetUid === State.myUid) {
+      privateInfo = State.myPrivateCards;
+    } else {
+      const tPlayer = room.players && room.players[targetUid];
+      if (tPlayer && tPlayer.isAI) {
+        privateInfo = State.botPrivateData[targetUid] || (room.botPrivate && room.botPrivate[targetUid]);
+      } else {
+        privateInfo = State.teammatePrivateCards;
+      }
+    }
+
+    const faceDown = (privateInfo && privateInfo.faceDown) || [];
     if (cardIndex >= faceDown.length) return;
 
     const revealedCard = faceDown.splice(cardIndex, 1)[0];
@@ -1407,36 +1862,50 @@
     const firstCard = playedCards[0];
     CardAudio.playCard();
 
+    let targetUid = playerUid;
+    const isTeamMode = (room.gameMode === '2v2');
+    if (isTeamMode) {
+      const pRem = (player.handCount || 0) + (player.faceUp ? player.faceUp.length : 0) + (player.faceDownCount || 0);
+      if (pRem === 0) {
+        const tUid = getTeammateUid(room, playerUid);
+        if (tUid) targetUid = tUid;
+      }
+    }
+    const targetPlayer = room.players[targetUid];
+
     let privateInfo;
     if (isSinglePlayerMode) {
-      privateInfo = singlePlayerState.privateData[playerUid] || { hand: [], faceDown: [] };
-    } else if (player.isAI) {
-      if (!State.botPrivateData[playerUid]) {
-        State.botPrivateData[playerUid] = { hand: [], faceDown: [] };
+      privateInfo = singlePlayerState.privateData[targetUid] || { hand: [], faceDown: [] };
+    } else if (targetPlayer.isAI) {
+      if (!State.botPrivateData[targetUid]) {
+        State.botPrivateData[targetUid] = (room.botPrivate && room.botPrivate[targetUid]) || { hand: [], faceDown: [] };
       }
-      privateInfo = State.botPrivateData[playerUid];
-    } else {
+      privateInfo = State.botPrivateData[targetUid];
+    } else if (targetUid === State.myUid) {
       privateInfo = State.myPrivateCards;
+    } else {
+      privateInfo = State.teammatePrivateCards;
     }
 
-    // Remove played cards from source
+    // Remove played cards from source (hand and/or face-up table cards)
     if (!isFromFaceDown) {
       const hand = privateInfo.hand || [];
-      if (hand.length > 0) {
-        playedCards.forEach(pc => {
-          const idx = hand.findIndex(c => c.id === pc.id);
-          if (idx !== -1) hand.splice(idx, 1);
-        });
-        privateInfo.hand = hand;
-      } else {
-        // From face-up
-        const faceUp = player.faceUp || [];
-        playedCards.forEach(pc => {
-          const idx = faceUp.findIndex(c => c.id === pc.id);
-          if (idx !== -1) faceUp.splice(idx, 1);
-        });
-        player.faceUp = faceUp;
-      }
+      const faceUp = targetPlayer.faceUp || [];
+
+      playedCards.forEach(pc => {
+        const handIdx = hand.findIndex(c => c.id === pc.id);
+        if (handIdx !== -1) {
+          hand.splice(handIdx, 1);
+        } else {
+          const upIdx = faceUp.findIndex(c => c.id === pc.id);
+          if (upIdx !== -1) {
+            faceUp.splice(upIdx, 1);
+          }
+        }
+      });
+
+      privateInfo.hand = hand;
+      targetPlayer.faceUp = faceUp;
     }
 
     // Refill Hand up to 3 from draw deck
@@ -1456,7 +1925,7 @@
     let is7Played = false;
 
     // 10 = Burn Pile + Extra Turn
-    if (firstCard.rank === '10') {
+    if (firstCard && firstCard.rank === '10') {
       isBurn = true;
       newPile = [];
       newPileTop = null;
@@ -1465,7 +1934,7 @@
       showActionBanner(`💥 ¡${player.name} tiró un 10 y quemó el montón! (Turno extra)`);
     }
     // 4 of a kind consecutive = Burn Pile + Extra Turn
-    else if (checkFourOfAKindBurn(room.pile || [], playedCards)) {
+    else if (firstCard && checkFourOfAKindBurn(room.pile || [], playedCards)) {
       isBurn = true;
       newPile = [];
       newPileTop = null;
@@ -1474,35 +1943,49 @@
       showActionBanner(`🔥 ¡4 cartas iguales consecutivas! ${player.name} quemó el montón (Turno extra).`);
     }
     // 2 = Reset pile top
-    else if (firstCard.rank === '2') {
+    else if (firstCard && firstCard.rank === '2') {
       showActionBanner(`🃏 ${player.name} jugó un 2 (Reinicio). La siguiente carta puede ser cualquiera.`);
     }
     // 7 = Lower restriction
-    else if (firstCard.rank === '7') {
+    else if (firstCard && firstCard.rank === '7') {
       is7Played = true;
       showActionBanner(`⚡ ${player.name} jugó un 7. ¡El siguiente debe tirar 7 o menor!`);
     }
-    else {
+    else if (firstCard) {
       showActionBanner(`${player.name} jugó ${playedCards.map(c => c.name).join(', ')}.`);
     }
 
-    player.handCount = (privateInfo.hand && privateInfo.hand.length) || 0;
-    player.faceUpCount = (player.faceUp && player.faceUp.length) || 0;
-    player.faceDownCount = (privateInfo.faceDown && privateInfo.faceDown.length) || 0;
+    targetPlayer.handCount = (privateInfo.hand && privateInfo.hand.length) || 0;
+    targetPlayer.faceUpCount = (targetPlayer.faceUp && targetPlayer.faceUp.length) || 0;
+    targetPlayer.faceDownCount = (privateInfo.faceDown && privateInfo.faceDown.length) || 0;
 
-    // Check Victory
-    const totalRemaining = player.handCount + player.faceUpCount + player.faceDownCount;
-    if (totalRemaining === 0 && !player.isFinished) {
-      player.isFinished = true;
-      const currentWinners = room.winners || [];
-      const place = currentWinners.length + 1;
-      player.finishPlace = place;
-      currentWinners.push({ uid: playerUid, name: player.name, place });
-      room.winners = currentWinners;
-      showToast(`🏆 ¡${player.name} ha terminado en ${place}º lugar!`, '🎉');
-      CardAudio.win();
-      // Award prize immediately (e.g. 1st or 2nd place in 3-4 players)
-      awardPrizeIfEligible(playerUid, place, room);
+    // Check Victory Condition
+    if (isTeamMode) {
+      const teammateUid = getTeammateUid(room, playerUid);
+      const teammate = teammateUid ? room.players[teammateUid] : null;
+      const myTotal = (player.handCount || 0) + (player.faceUp ? player.faceUp.length : 0) + (player.faceDownCount || 0);
+      const teamTotal = teammate ? ((teammate.handCount || 0) + (teammate.faceUp ? teammate.faceUp.length : 0) + (teammate.faceDownCount || 0)) : 0;
+
+      // Both teammates must have 0 cards for team to finish!
+      if (myTotal === 0 && teamTotal === 0 && !player.isFinished) {
+        player.isFinished = true;
+        if (teammate) teammate.isFinished = true;
+        showToast(`🏆 ¡El Equipo ${player.team === 'blue' ? 'Azul 🔵' : 'Rojo 🔴'} terminó todas sus cartas!`, '🎉');
+        CardAudio.win();
+      }
+    } else {
+      const totalRemaining = player.handCount + player.faceUpCount + player.faceDownCount;
+      if (totalRemaining === 0 && !player.isFinished) {
+        player.isFinished = true;
+        const currentWinners = room.winners || [];
+        const place = currentWinners.length + 1;
+        player.finishPlace = place;
+        currentWinners.push({ uid: playerUid, name: player.name, place, team: player.team });
+        room.winners = currentWinners;
+        showToast(`🏆 ¡${player.name} terminó todas sus cartas!`, '🎉');
+        CardAudio.win();
+        awardPrizeIfEligible(playerUid, place, room);
+      }
     }
 
     // Next Turn
@@ -1527,9 +2010,31 @@
       room.currentTurnIndex = nextIdx;
     }
 
-    // Active unfinished players who are connected and not abandoned
+    // Check Game Over (FFA vs 2v2)
     const activeUnfinished = Object.values(room.players).filter(p => !p.isFinished && !p.isAbandoned && p.connected !== false);
-    const isGameOver = activeUnfinished.length <= 1;
+    let isGameOver = false;
+    let winningTeam = null;
+
+    if (room.gameMode === '2v2') {
+      const bluePlayers = Object.values(room.players).filter(p => p.team === 'blue');
+      const redPlayers = Object.values(room.players).filter(p => p.team === 'red');
+      const blueAllDone = bluePlayers.length > 0 && bluePlayers.every(p => p.isFinished);
+      const redAllDone = redPlayers.length > 0 && redPlayers.every(p => p.isFinished);
+
+      if (blueAllDone) {
+        isGameOver = true;
+        winningTeam = 'blue';
+        room.winningTeam = 'blue';
+        showToast('🏆 ¡EQUIPO AZUL HA GANADO LA PARTIDA! 🔵', '🎉');
+      } else if (redAllDone) {
+        isGameOver = true;
+        winningTeam = 'red';
+        room.winningTeam = 'red';
+        showToast('🏆 ¡EQUIPO ROJO HA GANADO LA PARTIDA! 🔴', '🎉');
+      }
+    } else {
+      isGameOver = activeUnfinished.length <= 1;
+    }
 
     State.selectedCardsToPlay.clear();
 
@@ -1539,9 +2044,17 @@
       singlePlayerState.isLowerRestriction = is7Played;
       singlePlayerState.deckCount = drawDeck.length;
       singlePlayerState.activePlayerUid = nextTurnUid;
+
       if (isGameOver) {
         singlePlayerState.status = 'FINISHED';
-        if (activeUnfinished.length === 1) {
+        singlePlayerState.winningTeam = winningTeam;
+
+        if (singlePlayerState.gameMode === '2v2') {
+          const myTeam = singlePlayerState.players[State.myUid] && singlePlayerState.players[State.myUid].team;
+          if (myTeam === winningTeam) {
+            awardPrizeIfEligible(State.myUid, 1, singlePlayerState);
+          }
+        } else if (activeUnfinished.length === 1) {
           const lastPlayer = activeUnfinished[0];
           lastPlayer.isFinished = true;
           const place = (singlePlayerState.winners.length + 1);
@@ -1550,6 +2063,7 @@
           awardPrizeIfEligible(lastPlayer.id, place, singlePlayerState);
         }
       }
+
       renderGameTable(singlePlayerState, State.myUid);
       if (!isGameOver) checkAndTriggerAI(singlePlayerState);
       return;
@@ -1564,17 +2078,24 @@
       drawDeck: drawDeck,
       currentTurnIndex: room.currentTurnIndex,
       activePlayerUid: nextTurnUid,
-      [`players/${playerUid}/handCount`]: player.handCount,
-      [`players/${playerUid}/faceUp`]: player.faceUp || [],
-      [`players/${playerUid}/faceDownCount`]: player.faceDownCount,
+      [`players/${targetUid}/handCount`]: targetPlayer.handCount,
+      [`players/${targetUid}/faceUp`]: targetPlayer.faceUp || [],
+      [`players/${targetUid}/faceDownCount`]: targetPlayer.faceDownCount,
+      [`players/${targetUid}/isFinished`]: targetPlayer.isFinished,
       [`players/${playerUid}/isFinished`]: player.isFinished,
-      [`players/${playerUid}/finishPlace`]: player.finishPlace || null,
-      winners: room.winners || []
+      winners: room.winners || [],
+      winningTeam: winningTeam || room.winningTeam || null
     };
+
+    if (targetPlayer.isAI) {
+      updates[`botPrivate/${targetUid}`] = privateInfo;
+    }
 
     if (isGameOver) {
       updates.status = 'FINISHED';
-      if (activeUnfinished.length === 1) {
+      if (room.gameMode === '2v2') {
+        updates.winningTeam = winningTeam;
+      } else if (activeUnfinished.length === 1) {
         const lastPlayer = activeUnfinished[0];
         const place = (room.winners || []).length + 1;
         updates[`players/${lastPlayer.id}/isFinished`] = true;
@@ -1587,10 +2108,12 @@
 
     try {
       const db = global.FirebaseService.getDb();
-      db.ref(`guerra_private/${currentRoomId}/${playerUid}`).set({
-        hand: privateInfo.hand || [],
-        faceDown: privateInfo.faceDown || []
-      }).catch(() => {});
+      if (db && currentRoomId && !targetPlayer.isAI) {
+        db.ref(`${RTDB_PATHS.PRIVATE}/${currentRoomId}/${targetUid}`).set({
+          hand: privateInfo.hand || [],
+          faceDown: privateInfo.faceDown || []
+        }).catch(() => {});
+      }
     } catch (e) {}
 
     try {
@@ -1608,23 +2131,35 @@
     CardAudio.pickup();
     showActionBanner(`📥 ${player.name} recogió el montón (${room.pile ? room.pile.length : 0} cartas).`);
 
+    let targetUid = playerUid;
+    if (room.gameMode === '2v2') {
+      const pRem = (player.handCount || 0) + (player.faceUp ? player.faceUp.length : 0) + (player.faceDownCount || 0);
+      if (pRem === 0) {
+        const tUid = getTeammateUid(room, playerUid);
+        if (tUid) targetUid = tUid;
+      }
+    }
+    const targetPlayer = room.players[targetUid];
+
     let privateInfo;
     if (isSinglePlayerMode) {
-      privateInfo = singlePlayerState.privateData[playerUid] || { hand: [], faceDown: [] };
-    } else if (player.isAI) {
-      if (!State.botPrivateData[playerUid]) {
-        State.botPrivateData[playerUid] = { hand: [], faceDown: [] };
+      privateInfo = singlePlayerState.privateData[targetUid] || { hand: [], faceDown: [] };
+    } else if (targetPlayer.isAI) {
+      if (!State.botPrivateData[targetUid]) {
+        State.botPrivateData[targetUid] = (room.botPrivate && room.botPrivate[targetUid]) || { hand: [], faceDown: [] };
       }
-      privateInfo = State.botPrivateData[playerUid];
-    } else {
+      privateInfo = State.botPrivateData[targetUid];
+    } else if (targetUid === State.myUid) {
       privateInfo = State.myPrivateCards;
+    } else {
+      privateInfo = State.teammatePrivateCards;
     }
 
     const cardsToAdd = [...(room.pile || [])];
     if (extraFailedCard) cardsToAdd.push(extraFailedCard);
 
     privateInfo.hand = sortCardsAscending([...(privateInfo.hand || []), ...cardsToAdd]);
-    player.handCount = privateInfo.hand.length;
+    targetPlayer.handCount = privateInfo.hand.length;
 
     const newPile = [];
     const newPileTop = null;
@@ -1660,23 +2195,31 @@
 
     try {
       const db = global.FirebaseService.getDb();
-      db.ref(`guerra_private/${currentRoomId}/${playerUid}`).set({
-        hand: privateInfo.hand || [],
-        faceDown: privateInfo.faceDown || []
-      }).catch(() => {});
+      if (db && currentRoomId && !targetPlayer.isAI) {
+        db.ref(`${RTDB_PATHS.PRIVATE}/${currentRoomId}/${targetUid}`).set({
+          hand: privateInfo.hand || [],
+          faceDown: privateInfo.faceDown || []
+        }).catch(() => {});
+      }
     } catch (e) {}
 
+    const updates = {
+      pile: newPile,
+      pileTop: newPileTop,
+      isLowerRestriction: isLowerRestriction,
+      currentTurnIndex: room.currentTurnIndex,
+      activePlayerUid: nextTurnUid,
+      [`players/${targetUid}/handCount`]: targetPlayer.handCount
+    };
+
+    if (targetPlayer.isAI) {
+      updates[`botPrivate/${targetUid}`] = privateInfo;
+    }
+
     try {
-      await currentRoomRef.update({
-        pile: newPile,
-        pileTop: newPileTop,
-        isLowerRestriction: isLowerRestriction,
-        currentTurnIndex: room.currentTurnIndex,
-        activePlayerUid: nextTurnUid,
-        [`players/${playerUid}/handCount`]: player.handCount
-      });
+      await currentRoomRef.update(updates);
     } catch (err) {
-      console.error('Error updating pickup:', err);
+      console.error('Error in pickupPile update:', err);
     }
   }
 
@@ -1724,8 +2267,6 @@
     // 1. If pile can be burned with a 10
     const tenGroup = legalGroups.find(g => g[0].rank === '10');
     if (tenGroup) {
-      // If next opponent is a high/critical threat, burn immediately to get another turn!
-      // Or if the pile has at least 2 cards, burn it to clean table and take extra turn!
       if (threatLevel >= 2 || pileLength >= 2) {
         return tenGroup;
       }
@@ -1733,63 +2274,34 @@
 
     // 2. Anti-win tactical defense when next opponent is about to win (threatLevel >= 2)
     if (threatLevel >= 2 && nextOpponent) {
-      // Check if opponent is playing from face-up (we can see their exact cards)
       if (nextOpponent.handCount === 0 && nextOpponent.faceUp && nextOpponent.faceUp.length > 0) {
         const oppCards = nextOpponent.faceUp;
         const oppHasOnlyHighCards = oppCards.every(c => c.value > 7 && c.rank !== '2');
 
-        // If opponent has only high cards (> 7) and no 2, playing a 7 completely traps them!
         const sevenGroup = legalGroups.find(g => g[0].rank === '7');
         if (sevenGroup && oppHasOnlyHighCards) {
           return sevenGroup;
         }
-
-        // Check if we can play a card higher than their highest faceUp card
-        const oppMaxVal = Math.max(...oppCards.map(c => c.value));
-        const blockingHighGroups = legalGroups.filter(g => g[0].value > oppMaxVal && g[0].rank !== '2' && g[0].rank !== '10');
-        if (blockingHighGroups.length > 0) {
-          // Play the lowest card that still blocks them
-          blockingHighGroups.sort((a, b) => a[0].value - b[0].value);
-          return blockingHighGroups[0];
-        }
       }
 
-      // If next opponent has few cards in hand, NEVER play low cards (3, 4, 5, 6) if we can avoid it!
-      const highPressureGroups = legalGroups.filter(g => g[0].value >= 8 && g[0].rank !== '2');
-      if (highPressureGroups.length > 0) {
-        // Sort highest first to put maximum pressure on opponent
-        highPressureGroups.sort((a, b) => b[0].value - a[0].value);
-        return highPressureGroups[0];
-      }
-
-      // If no high cards, but has a 7
-      const sevenGroup = legalGroups.find(g => g[0].rank === '7');
-      if (sevenGroup) return sevenGroup;
-
-      // If only option is 10 or 2, use it rather than giving them a 3
-      if (tenGroup) return tenGroup;
-      const twoGroup = legalGroups.find(g => g[0].rank === '2');
-      if (twoGroup) return twoGroup;
+      // Play highest legal card to choke the opponent
+      const sortedByRankDesc = [...legalGroups].sort((a, b) => b[0].value - a[0].value);
+      return sortedByRankDesc[0];
     }
 
-    // 3. Normal Tactical Play (Threat is low or moderate)
-    // A) If we have multi-card combos (pairs/triples), playing them is great to shed cards
+    // 3. Smart progression:
     const multiGroups = legalGroups.filter(g => g.length > 1 && g[0].rank !== '2' && g[0].rank !== '10');
     if (multiGroups.length > 0) {
-      // Sort by combo size desc, then value asc
       multiGroups.sort((a, b) => (b.length - a.length) || (a[0].value - b[0].value));
       return multiGroups[0];
     }
 
-    // B) Standard ladder climbing: prefer normal cards (3..A) that beat pileTop without wasting 2 or 10
     const normalGroups = legalGroups.filter(g => g[0].rank !== '2' && g[0].rank !== '10');
     if (normalGroups.length > 0) {
-      // Sort ascending to climb ladder smoothly
       normalGroups.sort((a, b) => a[0].value - b[0].value);
       return normalGroups[0];
     }
 
-    // C) If only special cards (2 or 10) are legal:
     if (tenGroup && pileLength >= 2) return tenGroup;
     const twoGroup = legalGroups.find(g => g[0].rank === '2');
     if (twoGroup) return twoGroup;
@@ -1805,25 +2317,20 @@
     const nextOpponent = getNextActiveOpponent(room, botUid);
     const threatLevel = evaluateOpponentThreat(nextOpponent);
 
-    // If opponent is about to win, play blocking cards!
     if (threatLevel >= 2 && nextOpponent) {
-      // If we have a 10, burn and take another turn
       const ten = legalFaceUp.find(c => c.rank === '10');
       if (ten) return ten;
 
-      // If opponent face-up only has cards > 7, play a 7 to block
       if (nextOpponent.handCount === 0 && nextOpponent.faceUp && nextOpponent.faceUp.length > 0) {
         const oppOnlyHigh = nextOpponent.faceUp.every(c => c.value > 7 && c.rank !== '2');
         const seven = legalFaceUp.find(c => c.rank === '7');
         if (seven && oppOnlyHigh) return seven;
       }
 
-      // Otherwise play the highest card available to block them
       const sortedDesc = [...legalFaceUp].sort((a, b) => b.value - a.value);
       return sortedDesc[0];
     }
 
-    // Normal ladder climbing: play lowest legal card (saving 2 and 10 if possible)
     const normalFaceUp = legalFaceUp.filter(c => c.rank !== '2' && c.rank !== '10');
     if (normalFaceUp.length > 0) {
       normalFaceUp.sort((a, b) => a.value - b.value);
@@ -1837,7 +2344,6 @@
   function checkAndTriggerAI(room) {
     if (!room || room.status !== 'PLAYING') return;
 
-    // Auto-fix active turn if current player is finished or disconnected
     ensureValidActiveTurn(room);
 
     const activeUid = room.activePlayerUid;
@@ -1865,21 +2371,51 @@
     const player = room.players && room.players[botUid];
     if (!player || player.isFinished) return;
 
+    let targetUid = botUid;
+    const isTeamMode = (room.gameMode === '2v2');
+
     let privateInfo;
     if (isSinglePlayerMode) {
       privateInfo = singlePlayerState.privateData[botUid] || { hand: [], faceDown: [] };
     } else {
-      if (!State.botPrivateData[botUid]) {
-        State.botPrivateData[botUid] = { hand: [], faceDown: [] };
+      if (room.botPrivate && room.botPrivate[botUid]) {
+        privateInfo = room.botPrivate[botUid];
+      } else if (State.botPrivateData && State.botPrivateData[botUid]) {
+        privateInfo = State.botPrivateData[botUid];
+      } else {
+        privateInfo = { hand: [], faceDown: [] };
       }
-      privateInfo = State.botPrivateData[botUid];
     }
 
+    if (isTeamMode) {
+      const bHand = (privateInfo.hand || []).length;
+      const bFaceUp = (player.faceUp || []).length;
+      const bFaceDown = (privateInfo.faceDown || []).length;
+      if (bHand === 0 && bFaceUp === 0 && bFaceDown === 0) {
+        const tUid = getTeammateUid(room, botUid);
+        if (tUid) {
+          targetUid = tUid;
+          const tPlayer = room.players[tUid];
+          if (isSinglePlayerMode) {
+            privateInfo = singlePlayerState.privateData[tUid] || { hand: [], faceDown: [] };
+          } else if (tPlayer && tPlayer.isAI) {
+            privateInfo = (room.botPrivate && room.botPrivate[tUid]) || (State.botPrivateData && State.botPrivateData[tUid]) || { hand: [], faceDown: [] };
+          } else {
+            privateInfo = State.teammatePrivateCards || { hand: [], faceDown: [] };
+          }
+        }
+      }
+    }
+
+    const targetPlayer = room.players[targetUid] || player;
     const pileTop = room.pileTop;
     const isLower = room.isLowerRestriction;
+    const isDeckEmpty = (room.deckCount || 0) === 0;
 
-    // 1. Play from Hand
+    // 1. Play from Hand (with combo if deck is empty!)
     const hand = privateInfo.hand || [];
+    const faceUp = targetPlayer.faceUp || [];
+
     if (hand.length > 0) {
       const grouped = {};
       hand.forEach(c => {
@@ -1890,7 +2426,15 @@
       const legalGroups = Object.values(grouped).filter(cards => canPlayCard(cards[0], pileTop, isLower));
 
       if (legalGroups.length > 0) {
-        const chosenCards = chooseSmartHandGroup(legalGroups, room, botUid);
+        let chosenCards = chooseSmartHandGroup(legalGroups, room, botUid);
+        // Special rule: if draw deck is empty and faceUp has matching cards, play them together!
+        if (isDeckEmpty && faceUp.length > 0 && chosenCards.length > 0) {
+          const rank = chosenCards[0].rank;
+          const matchingFaceUp = faceUp.filter(c => c.rank === rank);
+          if (matchingFaceUp.length > 0) {
+            chosenCards = [...chosenCards, ...matchingFaceUp];
+          }
+        }
         executePlayAction(botUid, chosenCards);
         return;
       }
@@ -1900,39 +2444,39 @@
     }
 
     // 2. Play from Face-Up Cards
-    const faceUp = player.faceUp || [];
     if (faceUp.length > 0) {
       const legalFaceUp = faceUp.filter(c => canPlayCard(c, pileTop, isLower));
       if (legalFaceUp.length > 0) {
         const chosenCard = chooseSmartFaceUpCard(legalFaceUp, room, botUid);
-        executePlayAction(botUid, [chosenCard]);
+        const matchingFaceUp = faceUp.filter(c => c.rank === chosenCard.rank);
+        executePlayAction(botUid, matchingFaceUp.length > 1 ? matchingFaceUp : [chosenCard]);
         return;
       }
       executePickupAction(botUid);
       return;
     }
 
-    // 3. Play from Face-Down (Blind flip)
+    // 3. Play from Face-Down (Blind flip strictly from real dealt cards)
     let faceDown = privateInfo.faceDown || [];
-    if (faceDown.length === 0 && player.faceDownCount > 0) {
-      for (let i = 0; i < player.faceDownCount; i++) {
-        faceDown.push(getRandomCard());
-      }
-      privateInfo.faceDown = faceDown;
-    }
-
     if (faceDown.length > 0) {
       const cardIndex = Math.floor(Math.random() * faceDown.length);
-      const revealed = faceDown.splice(cardIndex, 1)[0] || getRandomCard();
-      if (canPlayCard(revealed, pileTop, isLower)) {
-        showToast(`🤖 ${player.name} reveló ${revealed.name} (Válida) ✅`, '🂠');
-        executePlayAction(botUid, [revealed], true);
-      } else {
-        showToast(`🤖 ${player.name} reveló ${revealed.name} (No válida) ❌`, '💥');
-        executePickupAction(botUid, revealed);
+      const revealed = faceDown.splice(cardIndex, 1)[0];
+      if (revealed) {
+        if (canPlayCard(revealed, pileTop, isLower)) {
+          showToast(`🤖 ${player.name} reveló ${revealed.name} (Válida) ✅`, '🂠');
+          executePlayAction(botUid, [revealed], true);
+        } else {
+          showToast(`🤖 ${player.name} reveló ${revealed.name} (No válida) ❌`, '💥');
+          executePickupAction(botUid, revealed);
+        }
+        return;
       }
-    } else {
-      executePlayAction(botUid, [getRandomCard()], true);
+    }
+
+    // Finished
+    if (player.faceDownCount <= 0 && hand.length === 0 && faceUp.length === 0) {
+      player.isFinished = true;
+      executePlayAction(botUid, [], false);
     }
   }
 
@@ -1972,7 +2516,7 @@
     // Live Pot Display
     const totalPot = room.totalPot || ((room.betAmount || 100) * turnOrder.length);
     if (DOM.livePotCount) {
-      DOM.livePotCount.textContent = totalPot.toLocaleString();
+      DOM.livePotCount.textContent = formatCoinsCompact(totalPot);
     }
 
     // Render Deck & Central Pile
@@ -2004,6 +2548,8 @@
       seatMap.top = turnOrder[(myIndex + 1) % 2];
     }
 
+    const isTeamMode = (room.gameMode === '2v2');
+
     function renderOpponentSeat(el, playerId) {
       if (!el) return;
       if (!playerId || !players[playerId]) {
@@ -2015,13 +2561,15 @@
       const opp = players[playerId];
       const isCurrentTurn = playerId === activeUid;
       const faceUpCards = opp.faceUp || [];
+      const oppTeamClass = isTeamMode ? (opp.team === 'blue' ? 'team-blue' : (opp.team === 'red' ? 'team-red' : '')) : '';
 
-      el.className = `guerra-seat-box ${isCurrentTurn ? 'active-turn' : ''} ${opp.isFinished ? 'finished' : ''}`;
+      el.className = `guerra-seat-box ${oppTeamClass} ${isCurrentTurn ? 'active-turn' : ''} ${opp.isFinished ? 'finished' : ''}`;
       el.innerHTML = `
         <div class="opponent-header">
           <span class="status-dot ${opp.connected ? 'online' : 'offline'}"></span>
           <span class="opponent-name">${opp.name}</span>
-          ${opp.isFinished ? `<span class="difficulty-badge" style="background: rgba(16, 185, 129, 0.2); color: var(--accent-emerald);">🏆 ${opp.finishPlace}º</span>` : ''}
+          ${isTeamMode && opp.team ? (opp.team === 'blue' ? '<span class="difficulty-badge team-badge-blue">🔵 Azul</span>' : '<span class="difficulty-badge team-badge-red">🔴 Rojo</span>') : ''}
+          ${opp.isFinished ? `<span class="difficulty-badge" style="background: rgba(16, 185, 129, 0.2); color: var(--accent-emerald);">🏆 Terminado</span>` : ''}
         </div>
         
         <div class="opponent-cards-row">
@@ -2042,28 +2590,81 @@
     renderOpponentSeat(DOM.seatRight, seatMap.right);
 
     // Render My Player Area (Bottom / Sur)
-    const myPrivate = isSinglePlayerMode ? singlePlayerState.privateData[myUid] : State.myPrivateCards;
+    const myTeammateUid = isTeamMode ? getTeammateUid(room, myUid) : null;
+    const myTeammate = myTeammateUid ? (players[myTeammateUid] || {}) : null;
+
+    let myPrivate = isSinglePlayerMode ? singlePlayerState.privateData[myUid] : State.myPrivateCards;
     if (myPrivate && myPrivate.hand) {
       myPrivate.hand = sortCardsAscending(myPrivate.hand);
     }
     const myPublic = players[myUid] || {};
-    const myHand = (myPrivate && myPrivate.hand) || [];
-    const myFaceUp = myPublic.faceUp || [];
-    const myFaceDownCount = (myPrivate && myPrivate.faceDown) ? myPrivate.faceDown.length : (myPublic.faceDownCount || 0);
+    let myHand = (myPrivate && myPrivate.hand) || [];
+    let myFaceUp = myPublic.faceUp || [];
+    let myFaceDownCount = (myPrivate && myPrivate.faceDown) ? myPrivate.faceDown.length : (myPublic.faceDownCount || 0);
+
+    const isMyCardsEmpty = (myHand.length === 0 && myFaceUp.length === 0 && myFaceDownCount === 0);
+    const teammateRemaining = myTeammate ? ((myTeammate.handCount || 0) + (myTeammate.faceUp ? myTeammate.faceUp.length : 0) + (myTeammate.faceDownCount || 0)) : 0;
+    const isPlayingPartnerCards = isTeamMode && isMyCardsEmpty && teammateRemaining > 0;
+
+    let activePartnerName = '';
+    if (isPlayingPartnerCards) {
+      activePartnerName = myTeammate.name || 'tu compañero';
+      let partnerPrivate = null;
+      if (isSinglePlayerMode) {
+        partnerPrivate = singlePlayerState.privateData[myTeammateUid];
+      } else if (myTeammate.isAI) {
+        partnerPrivate = State.botPrivateData[myTeammateUid] || (room.botPrivate && room.botPrivate[myTeammateUid]);
+      } else {
+        partnerPrivate = State.teammatePrivateCards;
+      }
+      myHand = (partnerPrivate && partnerPrivate.hand) ? sortCardsAscending(partnerPrivate.hand) : [];
+      myFaceUp = myTeammate.faceUp || [];
+      myFaceDownCount = (partnerPrivate && partnerPrivate.faceDown) ? partnerPrivate.faceDown.length : (myTeammate.faceDownCount || 0);
+    }
+
+    // Show/remove partner helper banner
+    if (DOM.seatBottom) {
+      let partnerBanner = DOM.seatBottom.querySelector('.partner-helper-banner');
+      if (isPlayingPartnerCards) {
+        if (!partnerBanner) {
+          partnerBanner = document.createElement('div');
+          partnerBanner.className = 'partner-helper-banner';
+          DOM.seatBottom.insertBefore(partnerBanner, DOM.seatBottom.firstChild);
+        }
+        partnerBanner.innerHTML = `
+          <span style="font-size: 24px;">🤝</span>
+          <div style="text-align: left;">
+            <div style="font-weight: 800; font-size: 13px; color: #93c5fd;">¡TUS CARTAS TERMINARON!</div>
+            <div style="font-size: 11px; color: #e2e8f0;">Jugando en tu turno con las cartas de tu compañero <b>${activePartnerName}</b>.</div>
+          </div>
+        `;
+      } else if (partnerBanner) {
+        partnerBanner.remove();
+      }
+    }
 
     // 1. Table Cards
+    const isDeckEmpty = (room.deckCount || 0) === 0;
+
     if (DOM.myTableCardsContainer) {
       let tableHtml = '';
       for (let i = 0; i < 3; i++) {
         const hasDown = i < myFaceDownCount;
         const upCard = myFaceUp[i] || null;
-        const isFaceUpPlayable = myHand.length === 0 && upCard !== null;
+
+        // Special combo rule: When draw deck is empty, if an upCard matches hand cards or selection, it's playable together!
+        const hasMatchingInHand = upCard && myHand.some(c => c.rank === upCard.rank);
+        const hasMatchingInSelected = upCard && State.selectedCardsToPlay.size > 0 && Array.from(State.selectedCardsToPlay)[0].rank === upCard.rank;
+        const isComboEligible = isDeckEmpty && upCard && (hasMatchingInHand || hasMatchingInSelected);
+
+        const isFaceUpPlayable = (myHand.length === 0 || isComboEligible) && upCard !== null;
         const isFaceDownPlayable = myHand.length === 0 && myFaceUp.length === 0 && hasDown;
+        const comboClass = isComboEligible ? 'combo-match-glow' : '';
 
         tableHtml += `
           <div class="my-table-slot">
             ${hasDown ? renderCardHTML(null, false, true, isFaceDownPlayable) : '<div class="guerra-card card-placeholder"></div>'}
-            ${upCard ? `<div class="faceup-overlay">${renderCardHTML(upCard, State.selectedCardsToPlay.has(upCard), false, isFaceUpPlayable)}</div>` : ''}
+            ${upCard ? `<div class="faceup-overlay">${renderCardHTML(upCard, isCardSelected(upCard), false, isFaceUpPlayable, comboClass)}</div>` : ''}
           </div>
         `;
       }
@@ -2071,7 +2672,11 @@
 
       DOM.myTableCardsContainer.querySelectorAll('.my-table-slot').forEach((slot, idx) => {
         const upCard = myFaceUp[idx];
-        if (myHand.length === 0 && upCard) {
+        const hasMatchingInHand = upCard && myHand.some(c => c.rank === upCard.rank);
+        const hasMatchingInSelected = upCard && State.selectedCardsToPlay.size > 0 && Array.from(State.selectedCardsToPlay)[0].rank === upCard.rank;
+        const isComboEligible = isDeckEmpty && upCard && (hasMatchingInHand || hasMatchingInSelected);
+
+        if (upCard && (myHand.length === 0 || isComboEligible)) {
           slot.addEventListener('click', () => {
             toggleCardSelection(upCard);
           });
@@ -2087,7 +2692,7 @@
     if (DOM.myHandCardsContainer) {
       DOM.myHandCardsContainer.innerHTML = myHand.map(card => `
         <div class="my-hand-card-wrapper" data-card-id="${card.id}">
-          ${renderCardHTML(card, State.selectedCardsToPlay.has(card), false, true)}
+          ${renderCardHTML(card, isCardSelected(card), false, true)}
         </div>
       `).join('');
 
@@ -2157,9 +2762,16 @@
     showView('game');
   }
 
+  function isCardSelected(card) {
+    if (!card) return false;
+    return Array.from(State.selectedCardsToPlay).some(c => c.id === card.id);
+  }
+
   function toggleCardSelection(card) {
-    if (State.selectedCardsToPlay.has(card)) {
-      State.selectedCardsToPlay.delete(card);
+    if (!card) return;
+    const existing = Array.from(State.selectedCardsToPlay).find(c => c.id === card.id);
+    if (existing) {
+      State.selectedCardsToPlay.delete(existing);
     } else {
       if (State.selectedCardsToPlay.size > 0) {
         const first = Array.from(State.selectedCardsToPlay)[0];
@@ -2199,70 +2811,140 @@
     const turnOrder = room.turnOrder || Object.keys(room.players || {});
     const totalPlayers = turnOrder.length || 4;
     const totalPot = room.totalPot || (bet * totalPlayers);
-    const champion = winners[0] || { name: 'Campeón' };
+    const isTeamMode = (room.gameMode === '2v2');
 
-    // Process payout once per match (in case not already awarded early)
+    // Process payout & stats once per match (in case not already awarded early)
     if (payoutProcessedForMatch !== (room.id || 'match')) {
       payoutProcessedForMatch = (room.id || 'match');
-      const myWinRecord = winners.find(w => w.uid === State.myUid);
-      if (myWinRecord) {
-        awardPrizeIfEligible(State.myUid, myWinRecord.place, room);
+      if (isTeamMode) {
+        const myTeam = room.players[State.myUid] && room.players[State.myUid].team;
+        const isWin = (myTeam && myTeam === room.winningTeam);
+        recordPlayerMatchResult(isWin);
+        if (isWin) {
+          awardPrizeIfEligible(State.myUid, 1, room);
+        }
+      } else {
+        const myWinRecord = winners.find(w => w.uid === State.myUid);
+        const isWin = (myWinRecord && myWinRecord.place === 1);
+        recordPlayerMatchResult(isWin);
+        if (myWinRecord) {
+          awardPrizeIfEligible(State.myUid, myWinRecord.place, room);
+        }
       }
     }
 
-    const firstPrize = calculatePrizeForPlace(1, totalPlayers, bet);
-    const isWinnerMe = champion.uid === State.myUid;
+    if (isTeamMode) {
+      const winningTeamName = room.winningTeam === 'blue' ? 'Equipo Azul 🔵' : 'Equipo Rojo 🔴';
+      const myTeam = room.players[State.myUid] && room.players[State.myUid].team;
+      const isWinnerMe = (myTeam === room.winningTeam);
+      const teamPrize = Math.floor(totalPot / 2);
 
-    if (DOM.podiumContainer) {
-      DOM.podiumContainer.innerHTML = `
-        <div style="font-size: 56px; filter: drop-shadow(0 0 20px var(--accent-amber-glow));">🏆</div>
-        <h2 style="font-size: 26px; font-weight: 900; color: #fff; margin-top: -6px;">¡${champion.name.toUpperCase()} HA GANADO!</h2>
-        <div style="display: flex; align-items: center; justify-content: center; gap: 8px; background: rgba(245, 158, 11, 0.15); border: 1px solid var(--accent-amber); border-radius: var(--radius-full); padding: 6px 18px; margin-top: 4px;">
-          <span style="font-size: 20px;">🪙</span>
-          <span style="color: var(--accent-amber); font-size: 16px; font-weight: 900;">
-            ${isWinnerMe ? `¡Te llevas el 1.º Lugar: +${firstPrize} Monedas!` : `1.º Lugar (${champion.name}): +${firstPrize} Monedas`}
-          </span>
-        </div>
-      `;
-    }
+      if (DOM.podiumContainer) {
+        DOM.podiumContainer.innerHTML = `
+          <div style="font-size: 56px; filter: drop-shadow(0 0 20px var(--accent-amber-glow));">🏆</div>
+          <h2 style="font-size: 26px; font-weight: 900; color: #fff; margin-top: -6px;">¡${winningTeamName.toUpperCase()} GANA!</h2>
+          <div style="display: flex; align-items: center; justify-content: center; gap: 8px; background: rgba(245, 158, 11, 0.15); border: 1px solid var(--accent-amber); border-radius: var(--radius-full); padding: 6px 18px; margin-top: 4px;">
+            <span style="font-size: 20px;">🪙</span>
+            <span style="color: var(--accent-amber); font-size: 16px; font-weight: 900;">
+              ${isWinnerMe ? `¡Tu equipo gana! Premio para ti: +${formatCoinsCompact(teamPrize)} Monedas` : `Ganador: ${winningTeamName} (+${formatCoinsCompact(teamPrize)} Monedas c/u)`}
+            </span>
+          </div>
+        `;
+      }
 
-    if (DOM.resultsTableBody) {
-      DOM.resultsTableBody.innerHTML = winners.map(w => {
-        const prize = calculatePrizeForPlace(w.place, totalPlayers, bet);
-        const netProfit = prize - bet;
-        let profitStr = '';
-        let color = 'var(--text-dim)';
+      if (DOM.resultsTableBody) {
+        const bluePlayers = Object.values(room.players || {}).filter(p => p.team === 'blue');
+        const redPlayers = Object.values(room.players || {}).filter(p => p.team === 'red');
+        const isBlueWin = room.winningTeam === 'blue';
 
-        if (w.place === 1) {
-          profitStr = `+${prize} 🪙 (Ganancia: +${netProfit})`;
-          color = 'var(--accent-emerald)';
-        } else if (w.place === 2) {
-          if (prize > 0) {
-            profitStr = `+${prize} 🪙 (Recupera apuesta: 0 net)`;
-            color = 'var(--accent-amber)';
-          } else {
-            profitStr = `-${bet} 🪙`;
-            color = 'var(--accent-rose)';
-          }
-        } else {
-          profitStr = `-${bet} 🪙`;
-          color = 'var(--accent-rose)';
-        }
-
-        return `
-          <tr style="border-bottom: 1px solid rgba(51, 65, 85, 0.4); ${w.place === 1 ? 'background: rgba(245, 158, 11, 0.1);' : ''}">
-            <td style="padding: 12px 8px; font-size: 18px; font-weight: 800;">
-              ${w.place === 1 ? '🥇 1.º' : w.place === 2 ? '🥈 2.º' : w.place === 3 ? '🥉 3.º' : '4.º'}
-            </td>
-            <td style="padding: 12px 8px; font-weight: 700; color: var(--text-main);">
-              ${w.name} ${w.uid === State.myUid ? '(Tú)' : ''}
-            </td>
-            <td style="padding: 12px 8px; text-align: right; font-family: var(--font-mono); font-weight: 800; color: ${color};">
-              ${profitStr}
+        DOM.resultsTableBody.innerHTML = `
+          <tr style="background: rgba(59, 130, 246, 0.15); border-bottom: 1px solid rgba(59, 130, 246, 0.4);">
+            <td colspan="3" style="padding: 10px 8px; font-weight: 800; color: #60a5fa;">
+              ${isBlueWin ? '🏆 1.º LUGAR: EQUIPO AZUL 🔵 (GANADORES)' : '2.º LUGAR: EQUIPO AZUL 🔵'}
             </td>
           </tr>
+          ${bluePlayers.map(p => `
+            <tr style="border-bottom: 1px solid rgba(51, 65, 85, 0.4);">
+              <td style="padding: 8px 12px; font-size: 16px;">${isBlueWin ? '🥇' : '🥈'}</td>
+              <td style="padding: 8px 12px; font-weight: 700;">${p.name} ${p.id === State.myUid ? '(Tú)' : ''}</td>
+              <td style="padding: 8px 12px; text-align: right; font-family: var(--font-mono); font-weight: 800; color: ${isBlueWin ? 'var(--accent-emerald)' : 'var(--accent-rose)'};">
+                ${isBlueWin ? `+${formatCoinsCompact(teamPrize)} 🪙 (Ganancia: +${formatCoinsCompact(teamPrize - bet)})` : `-${formatCoinsCompact(bet)} 🪙`}
+              </td>
+            </tr>
+          `).join('')}
+
+          <tr style="background: rgba(239, 68, 68, 0.15); border-bottom: 1px solid rgba(239, 68, 68, 0.4);">
+            <td colspan="3" style="padding: 10px 8px; font-weight: 800; color: #f87171;">
+              ${!isBlueWin ? '🏆 1.º LUGAR: EQUIPO ROJO 🔴 (GANADORES)' : '2.º LUGAR: EQUIPO ROJO 🔴'}
+            </td>
+          </tr>
+          ${redPlayers.map(p => `
+            <tr style="border-bottom: 1px solid rgba(51, 65, 85, 0.4);">
+              <td style="padding: 8px 12px; font-size: 16px;">${!isBlueWin ? '🥇' : '🥈'}</td>
+              <td style="padding: 8px 12px; font-weight: 700;">${p.name} ${p.id === State.myUid ? '(Tú)' : ''}</td>
+              <td style="padding: 8px 12px; text-align: right; font-family: var(--font-mono); font-weight: 800; color: ${!isBlueWin ? 'var(--accent-emerald)' : 'var(--accent-rose)'};">
+                ${!isBlueWin ? `+${formatCoinsCompact(teamPrize)} 🪙 (Ganancia: +${formatCoinsCompact(teamPrize - bet)})` : `-${formatCoinsCompact(bet)} 🪙`}
+              </td>
+            </tr>
+          `).join('')}
         `;
-      }).join('');
+      }
+    } else {
+      const champion = winners[0] || { name: 'Campeón' };
+      const firstPrize = calculatePrizeForPlace(1, totalPlayers, bet, room);
+      const isWinnerMe = champion.uid === State.myUid;
+
+      if (DOM.podiumContainer) {
+        DOM.podiumContainer.innerHTML = `
+          <div style="font-size: 56px; filter: drop-shadow(0 0 20px var(--accent-amber-glow));">🏆</div>
+          <h2 style="font-size: 26px; font-weight: 900; color: #fff; margin-top: -6px;">¡${champion.name.toUpperCase()} HA GANADO!</h2>
+          <div style="display: flex; align-items: center; justify-content: center; gap: 8px; background: rgba(245, 158, 11, 0.15); border: 1px solid var(--accent-amber); border-radius: var(--radius-full); padding: 6px 18px; margin-top: 4px;">
+            <span style="font-size: 20px;">🪙</span>
+            <span style="color: var(--accent-amber); font-size: 16px; font-weight: 900;">
+              ${isWinnerMe ? `¡Te llevas el 1.º Lugar: +${formatCoinsCompact(firstPrize)} Monedas!` : `1.º Lugar (${champion.name}): +${formatCoinsCompact(firstPrize)} Monedas`}
+            </span>
+          </div>
+        `;
+      }
+
+      if (DOM.resultsTableBody) {
+        DOM.resultsTableBody.innerHTML = winners.map(w => {
+          const prize = calculatePrizeForPlace(w.place, totalPlayers, bet, room);
+          const netProfit = prize - bet;
+          let profitStr = '';
+          let color = 'var(--text-dim)';
+
+          if (w.place === 1) {
+            profitStr = `+${formatCoinsCompact(prize)} 🪙 (Ganancia: +${formatCoinsCompact(netProfit)})`;
+            color = 'var(--accent-emerald)';
+          } else if (w.place === 2) {
+            if (prize > 0) {
+              profitStr = `+${formatCoinsCompact(prize)} 🪙 (Recupera apuesta: 0 net)`;
+              color = 'var(--accent-amber)';
+            } else {
+              profitStr = `-${formatCoinsCompact(bet)} 🪙`;
+              color = 'var(--accent-rose)';
+            }
+          } else {
+            profitStr = `-${formatCoinsCompact(bet)} 🪙`;
+            color = 'var(--accent-rose)';
+          }
+
+          return `
+            <tr style="border-bottom: 1px solid rgba(51, 65, 85, 0.4); ${w.place === 1 ? 'background: rgba(245, 158, 11, 0.1);' : ''}">
+              <td style="padding: 12px 8px; font-size: 18px; font-weight: 800;">
+                ${w.place === 1 ? '🥇 1.º' : w.place === 2 ? '🥈 2.º' : w.place === 3 ? '🥉 3.º' : '4.º'}
+              </td>
+              <td style="padding: 12px 8px; font-weight: 700; color: var(--text-main);">
+                ${w.name} ${w.uid === State.myUid ? '(Tú)' : ''}
+              </td>
+              <td style="padding: 12px 8px; text-align: right; font-family: var(--font-mono); font-weight: 800; color: ${color};">
+                ${profitStr}
+              </td>
+            </tr>
+          `;
+        }).join('');
+      }
     }
 
     if (State.isCreator) {
@@ -2276,9 +2958,46 @@
 
   // --- REALTIME LISTENERS & PRESENCE ---
 
+  let teammatePrivateRef = null;
+  function updateTeammatePrivateListener(room, myUid) {
+    if (!room || room.gameMode !== '2v2' || !currentRoomId) {
+      if (teammatePrivateRef) {
+        teammatePrivateRef.off();
+        teammatePrivateRef = null;
+      }
+      return;
+    }
+
+    const tUid = getTeammateUid(room, myUid);
+    if (!tUid) return;
+
+    const tPlayer = room.players && room.players[tUid];
+    if (tPlayer && tPlayer.isAI) {
+      return;
+    }
+
+    const db = global.FirebaseService && global.FirebaseService.getDb();
+    if (!db) return;
+
+    if (!teammatePrivateRef || teammatePrivateRef.key !== tUid) {
+      if (teammatePrivateRef) teammatePrivateRef.off();
+      teammatePrivateRef = db.ref(`${RTDB_PATHS.PRIVATE}/${currentRoomId}/${tUid}`);
+      teammatePrivateRef.on('value', snap => {
+        const data = snap.val() || {};
+        State.teammatePrivateCards = {
+          hand: sortCardsAscending(data.hand || []),
+          faceDown: data.faceDown || []
+        };
+        if (State.room && (State.room.status === 'PLAYING' || State.room.status === 'SETUP')) {
+          renderGameTable(State.room, myUid);
+        }
+      });
+    }
+  }
+
   function attachRoomListeners(roomRef, myUid) {
     const db = global.FirebaseService.getDb();
-    currentPrivateRef = db.ref(`guerra_private/${currentRoomId}/${myUid}`);
+    currentPrivateRef = db.ref(`${RTDB_PATHS.PRIVATE}/${currentRoomId}/${myUid}`);
 
     currentPrivateRef.on('value', snap => {
       const data = snap.val() || {};
@@ -2288,33 +3007,42 @@
         selectable6: sortCardsAscending(data.selectable6 || [])
       };
       const myPublic = (State.room && State.room.players && State.room.players[myUid]) || {};
-      if (State.room && State.room.status === 'SETUP' && !myPublic.setupReady) {
-        renderSetupView(State.room, myUid);
-      } else if (State.room && State.room.status === 'PLAYING') {
+      if (State.room && (State.room.status === 'PLAYING' || State.room.status === 'SETUP')) {
         renderGameTable(State.room, myUid);
       }
     });
 
-    roomRef.on('value', snap => {
+    currentRoomRef.on('value', snap => {
       const room = snap.val();
       if (!room) {
-        showToast('La sala fue cerrada o abandonada.', '🚪');
+        showToast('La sala ha sido cerrada por el anfitrión.', 'ℹ️');
         leaveRoom();
         return;
       }
 
       State.room = room;
-      State.isCreator = (room.creatorId === myUid);
+      if (room.botPrivate) {
+        State.botPrivateData = room.botPrivate;
+      }
+
+      updateTeammatePrivateListener(room, myUid);
+
+      const myData = room.players && room.players[myUid];
+      if (!myData && State.room.status !== 'WAITING') {
+        leaveRoom();
+        return;
+      }
+
+      const isHost = (room.creatorId === myUid);
+      State.isCreator = isHost;
 
       if (room.status === 'WAITING') {
         renderWaitingRoom(room);
       } else if (room.status === 'SETUP') {
-        ensureBetDeducted(room);
-
-        // Auto-win check if opponent abandoned during setup
         const allPlayers = Object.values(room.players || {});
         const activeConnected = allPlayers.filter(p => !p.isAbandoned && p.connected !== false);
-        if (allPlayers.length >= 2 && activeConnected.length === 1 && isUserBotController(room)) {
+
+        if (allPlayers.length >= 2 && activeConnected.length <= 1 && isUserBotController(room)) {
           const solePlayer = activeConnected[0];
           const finalWinners = [{ uid: solePlayer.id, name: solePlayer.name, place: 1 }];
           currentRoomRef.update({
@@ -2415,29 +3143,95 @@
       }
     }
 
+    const isTeamMode = (room.gameMode === '2v2');
+    if (DOM.waitingModeBadge) {
+      DOM.waitingModeBadge.textContent = isTeamMode ? '👥 2 vs 2 Equipos' : '⚔️ Todos vs Todos';
+      DOM.waitingModeBadge.style.background = isTeamMode ? 'rgba(59, 130, 246, 0.2)' : 'rgba(245, 158, 11, 0.2)';
+      DOM.waitingModeBadge.style.color = isTeamMode ? '#93c5fd' : '#fcd34d';
+      DOM.waitingModeBadge.style.border = isTeamMode ? '1px solid rgba(59, 130, 246, 0.4)' : '1px solid rgba(245, 158, 11, 0.4)';
+    }
+
     const bet = room.betAmount || selectedBetAmount || 100;
-    const pot = bet * playerList.length;
+    const pot = isTeamMode ? bet * 4 : bet * (playerList.length === 1 ? 4 : playerList.length);
     if (DOM.waitingBetBadge) {
-      DOM.waitingBetBadge.textContent = `🪙 Apuesta: ${bet} | Bote: ${pot}`;
+      DOM.waitingBetBadge.textContent = `🪙 Apuesta: ${formatCoinsCompact(bet)} | Bote: ${formatCoinsCompact(pot)}`;
+    }
+
+    // Bot Controls for host
+    if (DOM.waitingBotControls) {
+      DOM.waitingBotControls.style.display = State.isCreator ? 'flex' : 'none';
+      if (DOM.btnAddBot) DOM.btnAddBot.disabled = playerList.length >= 4;
+      const botCount = playerList.filter(p => p.isAI).length;
+      if (DOM.btnRemoveBot) DOM.btnRemoveBot.disabled = botCount <= 0;
+    }
+
+    // Team instruction
+    if (DOM.teamInstruction) {
+      DOM.teamInstruction.style.display = isTeamMode ? 'block' : 'none';
     }
 
     if (DOM.waitingPlayersList) {
-      DOM.waitingPlayersList.innerHTML = playerList.map(p => `
-        <div class="player-slot-card ready" style="padding: 10px 14px;">
-          <div style="display: flex; align-items: center; gap: 10px; width: 100%;">
-            <span class="status-dot ${p.connected ? 'online' : 'offline'}"></span>
-            <span style="font-weight: 700; flex: 1; text-align: left;">${p.name} ${p.id === State.myUid ? '(Tú)' : ''}</span>
-            ${p.id === room.creatorId ? '<span class="player-badge badge-host">👑 Anfitrión</span>' : '<span class="player-badge badge-guest">Jugador</span>'}
+      DOM.waitingPlayersList.innerHTML = playerList.map(p => {
+        const isMe = (p.id === State.myUid);
+        const canSwitchTeam = isTeamMode && (isMe || State.isCreator);
+        let teamBadgeHtml = '';
+        if (isTeamMode) {
+          const teamColor = p.team === 'red' ? 'red' : 'blue';
+          const teamLabel = p.team === 'red' ? '🔴 Rojo' : '🔵 Azul';
+          teamBadgeHtml = `
+            <span class="team-badge-${teamColor}" style="padding: 3px 9px; border-radius: 9999px; font-size: 11px; font-weight: 800;">
+              ${teamLabel}
+            </span>
+            ${canSwitchTeam ? `<button class="btn-team-toggle" data-player-id="${p.id}" style="padding: 2px 7px; font-size: 10px; border-radius: 6px; border: 1px solid rgba(255,255,255,0.2); background: rgba(255,255,255,0.1); color: #fff; cursor: pointer;">Cambiar 🔄</button>` : ''}
+          `;
+        }
+
+        return `
+          <div class="player-slot-card ready" style="padding: 10px 14px; display: flex; align-items: center; justify-content: space-between; gap: 8px;">
+            <div style="display: flex; align-items: center; gap: 10px; flex: 1;">
+              <span class="status-dot ${p.connected ? 'online' : 'offline'}"></span>
+              <span style="font-weight: 700; text-align: left;">
+                ${p.name} ${isMe ? '(Tú)' : ''} ${p.isAI ? '🤖' : ''}
+              </span>
+              ${p.id === room.creatorId ? '<span class="player-badge badge-host">👑 Anfitrión</span>' : ''}
+            </div>
+            <div style="display: flex; align-items: center; gap: 6px;">
+              ${teamBadgeHtml}
+            </div>
           </div>
-        </div>
-      `).join('');
+        `;
+      }).join('');
+
+      DOM.waitingPlayersList.querySelectorAll('.btn-team-toggle').forEach(btn => {
+        btn.addEventListener('click', (e) => {
+          e.stopPropagation();
+          const targetId = btn.dataset.playerId;
+          togglePlayerTeam(targetId);
+        });
+      });
     }
 
     if (DOM.btnHostStart) {
       DOM.btnHostStart.style.display = State.isCreator ? 'flex' : 'none';
-      DOM.btnHostStart.innerHTML = playerList.length === 1
-        ? `<span>🤖</span> INICIAR (SOLO VS 3 IA - BOTE: ${bet * 4} 🪙)`
-        : `<span>⚔️</span> INICIAR PARTIDA (${playerList.length} JUGADORES - BOTE: ${pot} 🪙)`;
+      if (isTeamMode) {
+        const blueCount = playerList.filter(p => p.team === 'blue').length;
+        const redCount = playerList.filter(p => p.team === 'red').length;
+        if (playerList.length < 4) {
+          DOM.btnHostStart.disabled = false;
+          DOM.btnHostStart.innerHTML = `<span>🤖</span> INICIAR 2v2 (AUTOCOMPLETAR CON BOTS - BOTE: ${formatCoinsCompact(bet * 4)} 🪙)`;
+        } else if (blueCount !== 2 || redCount !== 2) {
+          DOM.btnHostStart.disabled = true;
+          DOM.btnHostStart.innerHTML = `<span>⚠️</span> EQUIPOS DESBALANCEADOS (${blueCount} Azules vs ${redCount} Rojos)`;
+        } else {
+          DOM.btnHostStart.disabled = false;
+          DOM.btnHostStart.innerHTML = `<span>⚔️</span> INICIAR PARTIDA 2 vs 2 (BOTE: ${formatCoinsCompact(bet * 4)} 🪙)`;
+        }
+      } else {
+        DOM.btnHostStart.disabled = false;
+        DOM.btnHostStart.innerHTML = playerList.length === 1
+          ? `<span>🤖</span> INICIAR (SOLO VS 3 IA - BOTE: ${formatCoinsCompact(bet * 4)} 🪙)`
+          : `<span>⚔️</span> INICIAR PARTIDA (${playerList.length} JUGADORES - BOTE: ${formatCoinsCompact(pot)} 🪙)`;
+      }
     }
 
     showView('waiting');
@@ -2464,7 +3258,7 @@
       if (!isSinglePlayerMode) {
         const db = global.FirebaseService ? global.FirebaseService.getDb() : null;
         if (db && roomId) {
-          chatRef = db.ref(`guerra_rooms/${roomId}/messages`);
+          chatRef = db.ref(`${RTDB_PATHS.ROOMS}/${roomId}/messages`);
           chatRef.limitToLast(50).on('child_added', snap => {
             const msg = snap.val();
             if (!msg || !msg.id) return;
@@ -2785,13 +3579,13 @@
       const db = global.FirebaseService && global.FirebaseService.getDb();
       if (db) {
         if (State.isCreator) {
-          db.ref('guerra_public_rooms/' + currentRoomId).remove().catch(() => {});
+          db.ref(`${RTDB_PATHS.PUBLIC_ROOMS}/${currentRoomId}`).remove().catch(() => {});
         } else if (State.room && State.room.isPublic && State.room.status === 'WAITING') {
           const remaining = Object.values(State.room.players || {}).filter(p => p.id !== myUid && p.connected !== false).length;
           if (remaining <= 0) {
-            db.ref('guerra_public_rooms/' + currentRoomId).remove().catch(() => {});
+            db.ref(`${RTDB_PATHS.PUBLIC_ROOMS}/${currentRoomId}`).remove().catch(() => {});
           } else {
-            db.ref('guerra_public_rooms/' + currentRoomId).update({ playerCount: remaining, status: 'WAITING' }).catch(() => {});
+            db.ref(`${RTDB_PATHS.PUBLIC_ROOMS}/${currentRoomId}`).update({ playerCount: remaining, status: 'WAITING' }).catch(() => {});
           }
         }
       }
@@ -2805,6 +3599,11 @@
       currentPrivateRef.off();
       currentPrivateRef = null;
     }
+    if (teammatePrivateRef) {
+      teammatePrivateRef.off();
+      teammatePrivateRef = null;
+    }
+    State.teammatePrivateCards = { hand: [], faceDown: [] };
     currentRoomId = null;
     isSinglePlayerMode = false;
     singlePlayerState = null;
@@ -2821,19 +3620,99 @@
       DOM.inputNickname.value = getPlayerName();
       DOM.inputNickname.addEventListener('change', () => {
         const clean = DOM.inputNickname.value.trim().substring(0, 20) || getPlayerName();
-        localStorage.setItem('sudoku_player_name', clean);
+        localStorage.setItem(PLAYER_STORAGE_KEYS.NAME, clean);
         DOM.inputNickname.value = clean;
         showToast(`Nombre actualizado: ${clean}`, '👤');
       });
     }
 
-    // Bet selection buttons in lobby
-    if (DOM.betButtons) {
-      DOM.betButtons.forEach(btn => {
-        btn.addEventListener('click', () => {
-          DOM.betButtons.forEach(b => b.classList.remove('active'));
-          btn.classList.add('active');
-          selectedBetAmount = parseInt(btn.dataset.bet, 10) || 100;
+    // Bet selection modal controls in lobby
+    openBetSelectorModal = function () {
+      if (DOM.betModalUserCoins) {
+        DOM.betModalUserCoins.textContent = `${getPlayerCoins().toLocaleString()} 🪙`;
+      }
+      if (DOM.modalBetSelector) {
+        DOM.modalBetSelector.classList.add('active');
+      }
+      if (DOM.betOptionsContainer) {
+        DOM.betOptionsContainer.querySelectorAll('.bet-option-card').forEach(card => {
+          const cardBet = parseInt(card.dataset.bet, 10);
+          card.classList.toggle('selected', cardBet === selectedBetAmount);
+        });
+      }
+    };
+
+    function closeBetSelectorModal() {
+      if (DOM.modalBetSelector) {
+        DOM.modalBetSelector.classList.remove('active');
+      }
+    }
+
+    function applySelectedBet(amount) {
+      selectedBetAmount = parseInt(amount, 10) || null;
+      if (!selectedBetAmount) return;
+
+      if (DOM.selectedBetDisplay) {
+        DOM.selectedBetDisplay.textContent = `${formatCoinsCompact(selectedBetAmount)} 🪙 (${selectedBetAmount.toLocaleString()} Monedas)`;
+        DOM.selectedBetDisplay.classList.remove('unselected');
+      }
+      if (DOM.selectedBetSubtext) {
+        DOM.selectedBetSubtext.textContent = `Bote Estimado: ${formatCoinsCompact(selectedBetAmount * 4)} 🪙 (4 jugadores)`;
+      }
+      if (DOM.betStatusHint) {
+        DOM.betStatusHint.textContent = `✅ ${formatCoinsCompact(selectedBetAmount)} 🪙`;
+        DOM.betStatusHint.style.color = 'var(--accent-emerald)';
+      }
+      if (DOM.btnOpenBetSelector) {
+        DOM.btnOpenBetSelector.classList.add('selected');
+      }
+
+      if (DOM.betOptionsContainer) {
+        DOM.betOptionsContainer.querySelectorAll('.bet-option-card').forEach(card => {
+          const cardBet = parseInt(card.dataset.bet, 10);
+          card.classList.toggle('selected', cardBet === selectedBetAmount);
+        });
+      }
+
+      CardAudio.click();
+      closeBetSelectorModal();
+    }
+
+    if (DOM.btnOpenBetSelector) {
+      DOM.btnOpenBetSelector.addEventListener('click', openBetSelectorModal);
+    }
+    if (DOM.btnCloseBetSelector) {
+      DOM.btnCloseBetSelector.addEventListener('click', closeBetSelectorModal);
+    }
+    if (DOM.btnCloseBetSelectorX) {
+      DOM.btnCloseBetSelectorX.addEventListener('click', closeBetSelectorModal);
+    }
+    if (DOM.modalBetSelector) {
+      DOM.modalBetSelector.addEventListener('click', (e) => {
+        if (e.target === DOM.modalBetSelector) closeBetSelectorModal();
+      });
+    }
+
+    if (DOM.betOptionsContainer) {
+      DOM.betOptionsContainer.querySelectorAll('.bet-option-card').forEach(card => {
+        card.addEventListener('click', () => {
+          const betVal = card.dataset.bet;
+          applySelectedBet(betVal);
+        });
+      });
+    }
+
+    // Game mode selection cards in lobby
+    if (DOM.modeCards) {
+      DOM.modeCards.forEach(card => {
+        card.addEventListener('click', () => {
+          DOM.modeCards.forEach(c => {
+            c.classList.remove('active');
+            c.classList.remove('selected');
+          });
+          card.classList.add('active');
+          card.classList.add('selected');
+          selectedGameMode = card.dataset.mode || 'ffa';
           CardAudio.click();
         });
       });
@@ -2847,6 +3726,11 @@
     // Create Public Room Button
     if (DOM.btnCreatePublic) {
       DOM.btnCreatePublic.addEventListener('click', async () => {
+        if (!selectedBetAmount) {
+          openBetSelectorModal();
+          showToast('Selecciona el monto de la apuesta primero.', '🪙');
+          return;
+        }
         try {
           const roomId = await createRoom(true);
           showToast(`¡Sala pública creada! Código: ${roomId}`, '🌐');
@@ -2859,6 +3743,11 @@
     // Create Private Room Button
     if (DOM.btnCreatePrivate) {
       DOM.btnCreatePrivate.addEventListener('click', async () => {
+        if (!selectedBetAmount) {
+          openBetSelectorModal();
+          showToast('Selecciona el monto de la apuesta primero.', '🪙');
+          return;
+        }
         try {
           const roomId = await createRoom(false);
           showToast(`¡Sala privada creada! Código: ${roomId}`, '🔒');
@@ -2871,6 +3760,11 @@
     // Fallback Create Room Button
     if (DOM.btnCreateRoom) {
       DOM.btnCreateRoom.addEventListener('click', async () => {
+        if (!selectedBetAmount) {
+          openBetSelectorModal();
+          showToast('Selecciona el monto de la apuesta primero.', '🪙');
+          return;
+        }
         try {
           const roomId = await createRoom(true);
           showToast(`¡Sala de Guerra creada! Código: ${roomId}`, '🚀');
@@ -2916,12 +3810,27 @@
     if (DOM.btnShareRoom) {
       DOM.btnShareRoom.addEventListener('click', () => {
         const code = DOM.displayRoomCode ? DOM.displayRoomCode.textContent : '';
-        const url = `${window.location.origin}${window.location.pathname}?game=guerra&room=${code}`;
+        const url = `${window.location.origin}${window.location.pathname}?room=${code}`;
         if (navigator.share) {
-          navigator.share({ title: 'Juego Guerra Online', text: `¡Únete a mi partida de Guerra! Código: ${code}`, url }).catch(() => {});
+          navigator.share({ title: 'Guerra Online - Juego de Cartas', text: `¡Únete a mi partida de Guerra! Código de sala: ${code}`, url }).catch(() => {});
         } else if (navigator.clipboard) {
-          navigator.clipboard.writeText(url).then(() => showToast('¡Enlace copiado!', '🔗'));
+          navigator.clipboard.writeText(url).then(() => showToast('¡Enlace de sala copiado!', '🔗'));
         }
+      });
+    }
+
+    // Waiting room bot controls
+    if (DOM.btnAddBot) {
+      DOM.btnAddBot.addEventListener('click', () => {
+        addBotToWaitingRoom();
+        CardAudio.click();
+      });
+    }
+
+    if (DOM.btnRemoveBot) {
+      DOM.btnRemoveBot.addEventListener('click', () => {
+        removeBotFromWaitingRoom();
+        CardAudio.click();
       });
     }
 
@@ -2944,21 +3853,230 @@
       DOM.btnReturnMenu.addEventListener('click', leaveRoom);
     }
 
-    if (DOM.btnViewRules) {
-      DOM.btnViewRules.addEventListener('click', () => {
-        if (global.PlatformService && global.PlatformService.openRulesModal) {
-          global.PlatformService.openRulesModal('guerra');
-        }
+    // --- RULES MODAL CONTROLS ---
+    function openRulesModal() {
+      if (DOM.modalRules) DOM.modalRules.classList.add('active');
+    }
+    function closeRulesModal() {
+      if (DOM.modalRules) DOM.modalRules.classList.remove('active');
+    }
+    if (DOM.btnHeaderRules) DOM.btnHeaderRules.addEventListener('click', openRulesModal);
+    if (DOM.btnViewRules) DOM.btnViewRules.addEventListener('click', openRulesModal);
+    if (DOM.btnGameRules) DOM.btnGameRules.addEventListener('click', openRulesModal);
+    if (DOM.btnCloseRules) DOM.btnCloseRules.addEventListener('click', closeRulesModal);
+    if (DOM.modalRules) {
+      DOM.modalRules.addEventListener('click', (e) => {
+        if (e.target === DOM.modalRules) closeRulesModal();
       });
     }
 
-    if (DOM.btnGameRules) {
-      DOM.btnGameRules.addEventListener('click', () => {
-        if (global.PlatformService && global.PlatformService.openRulesModal) {
-          global.PlatformService.openRulesModal('guerra');
+    // --- RANKING MODAL CONTROLS ---
+    let rankingUsersList = [];
+
+    async function openRankingModal() {
+      if (DOM.modalRanking) DOM.modalRanking.classList.add('active');
+      if (DOM.rankingSearchInput) DOM.rankingSearchInput.value = '';
+      await loadRankingData();
+    }
+
+    function closeRankingModal() {
+      if (DOM.modalRanking) DOM.modalRanking.classList.remove('active');
+    }
+
+    async function loadRankingData() {
+      const db = global.FirebaseService && global.FirebaseService.getDb();
+      if (DOM.rankingTableBody) {
+        DOM.rankingTableBody.innerHTML = `
+          <tr>
+            <td colspan="6" style="text-align: center; padding: 24px; color: var(--text-muted);">
+              Cargando clasificación...
+            </td>
+          </tr>
+        `;
+      }
+
+      let users = {};
+      if (db) {
+        try {
+          const snap = await db.ref(RTDB_PATHS.USERS).once('value');
+          users = snap.val() || {};
+        } catch (e) {
+          console.warn('Error cargando ranking de Firebase:', e);
         }
+      }
+
+      const myUid = State.myUid;
+      const myStats = getPlayerStats();
+      if (!users[myUid]) {
+        users[myUid] = {
+          uid: myUid,
+          name: getPlayerName(),
+          coins: getPlayerCoins(),
+          wins: myStats.wins,
+          losses: myStats.losses
+        };
+      } else {
+        users[myUid].coins = getPlayerCoins();
+        users[myUid].name = getPlayerName();
+      }
+
+      rankingUsersList = Object.values(users);
+      renderRankingTable();
+    }
+
+    function renderRankingTable() {
+      if (!DOM.rankingTableBody) return;
+      const query = (DOM.rankingSearchInput && DOM.rankingSearchInput.value || '').toLowerCase().trim();
+
+      let filtered = rankingUsersList.filter(u => {
+        if (!query) return true;
+        return (u.name || '').toLowerCase().includes(query) || (u.uid || '').toLowerCase().includes(query);
+      });
+
+      if (DOM.rankingTotalPlayersCount) {
+        DOM.rankingTotalPlayersCount.textContent = `${rankingUsersList.length} jugadores registrados`;
+      }
+
+      if (filtered.length === 0) {
+        DOM.rankingTableBody.innerHTML = `
+          <tr>
+            <td colspan="6" style="text-align: center; padding: 24px; color: var(--text-muted);">
+              No se encontraron jugadores.
+            </td>
+          </tr>
+        `;
+        return;
+      }
+
+      filtered.sort((a, b) => {
+        const winsA = parseInt(a.wins, 10) || 0;
+        const winsB = parseInt(b.wins, 10) || 0;
+        if (winsB !== winsA) return winsB - winsA;
+        return (parseInt(b.coins, 10) || 0) - (parseInt(a.coins, 10) || 0);
+      });
+
+      DOM.rankingTableBody.innerHTML = filtered.map((u, index) => {
+        const pos = index + 1;
+        let posBadge = `${pos}º`;
+        if (pos === 1) posBadge = '🥇 1º';
+        else if (pos === 2) posBadge = '🥈 2º';
+        else if (pos === 3) posBadge = '🥉 3º';
+
+        const isMe = (u.uid === State.myUid);
+        const wins = parseInt(u.wins, 10) || 0;
+        const losses = parseInt(u.losses, 10) || 0;
+        const total = wins + losses;
+        const winrate = total > 0 ? Math.round((wins / total) * 100) : 0;
+        const coins = parseInt(u.coins, 10) || 0;
+
+        let winrateColor = '#94a3b8';
+        let winrateBg = 'rgba(148, 163, 184, 0.15)';
+        if (winrate >= 60) {
+          winrateColor = '#34d399';
+          winrateBg = 'rgba(16, 185, 129, 0.2)';
+        } else if (winrate >= 40) {
+          winrateColor = '#fbbf24';
+          winrateBg = 'rgba(245, 158, 11, 0.2)';
+        } else if (total > 0) {
+          winrateColor = '#f87171';
+          winrateBg = 'rgba(239, 68, 68, 0.2)';
+        }
+
+        return `
+          <tr class="${isMe ? 'ranking-row-me' : ''}">
+            <td style="text-align: center; font-weight: 800; font-size: 14px;">
+              ${posBadge}
+            </td>
+            <td>
+              <span style="color: ${isMe ? '#fbbf24' : '#fff'}; font-weight: 700;">
+                ${escapeHTML(u.name || 'Jugador')}
+              </span>
+              ${isMe ? '<span style="font-size: 10px; background: rgba(245, 158, 11, 0.2); color: #fbbf24; border-radius: 4px; padding: 1px 4px; margin-left: 4px; font-weight: 800;">TÚ</span>' : ''}
+            </td>
+            <td style="text-align: center; font-family: var(--font-mono); font-weight: 800; color: var(--accent-emerald);">
+              ${wins}
+            </td>
+            <td style="text-align: center; font-family: var(--font-mono); font-weight: 800; color: var(--accent-rose);">
+              ${losses}
+            </td>
+            <td style="text-align: center;">
+              <span class="winrate-badge" style="background: ${winrateBg}; color: ${winrateColor};">
+                ${winrate}%
+              </span>
+            </td>
+            <td style="text-align: right; font-family: var(--font-mono); font-weight: 800; color: var(--accent-amber);">
+              ${coins.toLocaleString()} 🪙
+            </td>
+          </tr>
+        `;
+      }).join('');
+    }
+
+    if (DOM.btnRanking) DOM.btnRanking.addEventListener('click', openRankingModal);
+    if (DOM.btnViewRanking) DOM.btnViewRanking.addEventListener('click', openRankingModal);
+    if (DOM.btnCloseRanking) DOM.btnCloseRanking.addEventListener('click', closeRankingModal);
+    if (DOM.btnCloseRankingX) DOM.btnCloseRankingX.addEventListener('click', closeRankingModal);
+    if (DOM.modalRanking) {
+      DOM.modalRanking.addEventListener('click', (e) => {
+        if (e.target === DOM.modalRanking) closeRankingModal();
       });
     }
+    if (DOM.rankingSearchInput) {
+      DOM.rankingSearchInput.addEventListener('input', renderRankingTable);
+    }
+
+    // --- SOUND TOGGLE ---
+    if (DOM.btnHeaderSound) {
+      DOM.btnHeaderSound.addEventListener('click', () => {
+        const isEnabled = CardAudio.toggleSound();
+        DOM.btnHeaderSound.textContent = isEnabled ? '🔊' : '🔇';
+        DOM.btnHeaderSound.title = isEnabled ? 'Silenciar sonido' : 'Activar sonido';
+        showToast(isEnabled ? 'Sonido activado' : 'Sonido silenciado', isEnabled ? '🔊' : '🔇');
+      });
+    }
+
+    // --- FIREBASE SETTINGS MODAL CONTROLS ---
+    function openSettingsModal() {
+      const cfg = global.FirebaseService ? global.FirebaseService.getActiveConfig() : {};
+      if (DOM.inputApiKey) DOM.inputApiKey.value = cfg.apiKey || '';
+      if (DOM.inputDbUrl) DOM.inputDbUrl.value = cfg.databaseURL || '';
+      if (DOM.inputProjectId) DOM.inputProjectId.value = cfg.projectId || '';
+      if (DOM.modalSettings) DOM.modalSettings.classList.add('active');
+    }
+    function closeSettingsModal() {
+      if (DOM.modalSettings) DOM.modalSettings.classList.remove('active');
+    }
+    function saveFirebaseSettings() {
+      if (!global.FirebaseService) return;
+      const config = {
+        apiKey: (DOM.inputApiKey && DOM.inputApiKey.value.trim()) || '',
+        databaseURL: (DOM.inputDbUrl && DOM.inputDbUrl.value.trim()) || '',
+        projectId: (DOM.inputProjectId && DOM.inputProjectId.value.trim()) || ''
+      };
+      if (global.FirebaseService.saveCustomConfig(config)) {
+        global.FirebaseService.initFirebase();
+        showToast('Configuración de Firebase guardada.', '✅');
+        closeSettingsModal();
+        listenPublicRooms();
+      }
+    }
+    if (DOM.btnHeaderSettings) DOM.btnHeaderSettings.addEventListener('click', openSettingsModal);
+    if (DOM.btnCloseSettings) DOM.btnCloseSettings.addEventListener('click', closeSettingsModal);
+    if (DOM.btnSaveSettings) DOM.btnSaveSettings.addEventListener('click', saveFirebaseSettings);
+    if (DOM.modalSettings) {
+      DOM.modalSettings.addEventListener('click', (e) => {
+        if (e.target === DOM.modalSettings) closeSettingsModal();
+      });
+    }
+
+    // Auto-fill room code from URL ?room=CODE
+    try {
+      const urlParams = new URLSearchParams(window.location.search);
+      const roomParam = urlParams.get('room');
+      if (roomParam && DOM.inputJoinCode) {
+        DOM.inputJoinCode.value = roomParam.trim().toUpperCase();
+      }
+    } catch (e) {}
 
     // Guerra Chat Event Handlers
     if (DOM.chatToggleBtn) DOM.chatToggleBtn.addEventListener('click', GuerraChat.toggle);
@@ -3001,6 +4119,8 @@
     initEvents();
     updateCoinsDisplay();
     listenPublicRooms();
+    syncUserProfile();
+    listenMyUserProfile();
   }
 
   const GuerraGame = {
@@ -3027,6 +4147,15 @@
     module.exports = GuerraGame;
   } else {
     global.GuerraGame = GuerraGame;
+  }
+
+  // Auto-initialize when loaded in browser
+  if (typeof window !== 'undefined') {
+    if (document.readyState === 'loading') {
+      document.addEventListener('DOMContentLoaded', () => GuerraGame.init());
+    } else {
+      GuerraGame.init();
+    }
   }
 
 })(typeof window !== 'undefined' ? window : (typeof global !== 'undefined' ? global : self));

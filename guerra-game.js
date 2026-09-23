@@ -1693,13 +1693,23 @@
       const selectable6 = [deck.pop(), deck.pop(), deck.pop(), deck.pop(), deck.pop(), deck.pop()];
 
       if (finalPlayers[pid].isAI) {
-        selectable6.sort((a, b) => {
-          const scoreA = a.rank === '2' ? 20 : (a.rank === '10' ? 19 : a.value);
-          const scoreB = b.rank === '2' ? 20 : (b.rank === '10' ? 19 : b.value);
-          return scoreB - scoreA;
-        });
-        const chosenFaceUp = [selectable6[0], selectable6[1], selectable6[2]];
-        const privateHand = sortCardsAscending([selectable6[3], selectable6[4], selectable6[5]]);
+        let chosenFaceUp, privateHand;
+        if (global.GuerraBotAI && typeof global.GuerraBotAI.chooseSetupCards === 'function') {
+          const setup = global.GuerraBotAI.chooseSetupCards(selectable6, (State.room && State.room.gameMode === '2v2'), finalPlayers[pid].name);
+          if (setup && setup.faceUp && setup.hand) {
+            chosenFaceUp = setup.faceUp;
+            privateHand = setup.hand;
+          }
+        }
+        if (!chosenFaceUp) {
+          selectable6.sort((a, b) => {
+            const scoreA = a.rank === '2' ? 20 : (a.rank === '10' ? 19 : a.value);
+            const scoreB = b.rank === '2' ? 20 : (b.rank === '10' ? 19 : b.value);
+            return scoreB - scoreA;
+          });
+          chosenFaceUp = [selectable6[0], selectable6[1], selectable6[2]];
+          privateHand = sortCardsAscending([selectable6[3], selectable6[4], selectable6[5]]);
+        }
 
         finalPlayers[pid].faceUp = chosenFaceUp;
         finalPlayers[pid].handCount = 3;
@@ -1804,13 +1814,23 @@
       const bid = `bot_${i + 1}`;
       const botFaceDown = [deck.pop(), deck.pop(), deck.pop()];
       const bot6 = [deck.pop(), deck.pop(), deck.pop(), deck.pop(), deck.pop(), deck.pop()];
-      bot6.sort((a, b) => {
-        const sa = a.rank === '2' ? 20 : (a.rank === '10' ? 19 : a.value);
-        const sb = b.rank === '2' ? 20 : (b.rank === '10' ? 19 : b.value);
-        return sb - sa;
-      });
-      const botFaceUp = [bot6[0], bot6[1], bot6[2]];
-      const botHand = sortCardsAscending([bot6[3], bot6[4], bot6[5]]);
+      let botFaceUp, botHand;
+      if (global.GuerraBotAI && typeof global.GuerraBotAI.chooseSetupCards === 'function') {
+        const setup = global.GuerraBotAI.chooseSetupCards(bot6, isTeamMode, botNames[i]);
+        if (setup && setup.faceUp && setup.hand) {
+          botFaceUp = setup.faceUp;
+          botHand = setup.hand;
+        }
+      }
+      if (!botFaceUp) {
+        bot6.sort((a, b) => {
+          const sa = a.rank === '2' ? 20 : (a.rank === '10' ? 19 : a.value);
+          const sb = b.rank === '2' ? 20 : (b.rank === '10' ? 19 : b.value);
+          return sb - sa;
+        });
+        botFaceUp = [bot6[0], bot6[1], bot6[2]];
+        botHand = sortCardsAscending([bot6[3], bot6[4], bot6[5]]);
+      }
 
       // In 2v2 Solo mode: Tú + Bot Alfa = Blue Team vs Bot Beta + Bot Gamma = Red Team
       let bTeam = null;
@@ -2292,7 +2312,8 @@
       newPileTop = null;
       CardAudio.burn();
       triggerBurnAnimation();
-      showActionBanner(`💥 ¡${player.name} tiró un 10 y quemó el montón! (Turno extra)`);
+      showActionBanner(`💥 ¡${player.name} quemó con un 10! (Turno extra)`);
+      showToast(`💥 ¡${player.name} quemó con un 10! (Turno extra)`, '🔥');
     }
     // 4 of a kind consecutive = Burn Pile + Extra Turn
     else if (firstCard && checkFourOfAKindBurn(room.pile || [], playedCards)) {
@@ -2301,7 +2322,9 @@
       newPileTop = null;
       CardAudio.burn();
       triggerBurnAnimation();
-      showActionBanner(`🔥 ¡4 cartas iguales consecutivas! ${player.name} quemó el montón (Turno extra).`);
+      const burnedRank = firstCard.rank;
+      showActionBanner(`🔥 ¡4 cartas iguales consecutivas! ${player.name} quemó con 4 ${burnedRank} (Turno extra).`);
+      showToast(`🔥 ¡${player.name} quemó con 4 ${burnedRank}! (Turno extra)`, '💥');
     }
     // 2 = Reset pile top
     else if (firstCard && firstCard.rank === '2') {
@@ -2620,53 +2643,42 @@
     if (legalGroups.length === 0) return null;
     if (legalGroups.length === 1) return legalGroups[0];
 
-    const nextOpponent = getNextActiveOpponent(room, botUid);
-    const threatLevel = evaluateOpponentThreat(nextOpponent);
-    const pileTop = room.pileTop;
-    const pileLength = (room.pile && room.pile.length) || 0;
-
-    // 1. If pile can be burned with a 10
-    const tenGroup = legalGroups.find(g => g[0].rank === '10');
-    if (tenGroup) {
-      if (threatLevel >= 2 || pileLength >= 2) {
-        return tenGroup;
-      }
-    }
-
-    // 2. Anti-win tactical defense when next opponent is about to win (threatLevel >= 2)
-    if (threatLevel >= 2 && nextOpponent) {
-      if (nextOpponent.handCount === 0 && nextOpponent.faceUp && nextOpponent.faceUp.length > 0) {
-        const oppCards = nextOpponent.faceUp;
-        const oppHasOnlyHighCards = oppCards.every(c => c.value > 7 && c.rank !== '2');
-
-        const sevenGroup = legalGroups.find(g => g[0].rank === '7');
-        if (sevenGroup && oppHasOnlyHighCards) {
-          return sevenGroup;
-        }
-      }
-
-      // Play highest legal card to choke the opponent
-      const sortedByRankDesc = [...legalGroups].sort((a, b) => b[0].value - a[0].value);
-      return sortedByRankDesc[0];
-    }
-
-    // 3. Smart progression:
-    const multiGroups = legalGroups.filter(g => g.length > 1 && g[0].rank !== '2' && g[0].rank !== '10');
-    if (multiGroups.length > 0) {
-      multiGroups.sort((a, b) => (b.length - a.length) || (a[0].value - b[0].value));
-      return multiGroups[0];
-    }
-
     const normalGroups = legalGroups.filter(g => g[0].rank !== '2' && g[0].rank !== '10');
+    const tenGroup = legalGroups.find(g => g[0].rank === '10');
+    const twoGroup = legalGroups.find(g => g[0].rank === '2');
+
+    const nextOpp = getNextActiveOpponent(room, botUid);
+    const oppThreat = evaluateOpponentThreat(nextOpp);
+
+    // SI HAY AMENAZA CRÍTICA (el siguiente rival tiene <= 2 cartas o va a ganar):
+    // BLOQUEAR CON LA CARTA NORMAL MÁS ALTA POSIBLE (As, Rey, etc.)
+    if (oppThreat >= 2 && normalGroups.length > 0) {
+      normalGroups.sort((a, b) => b[0].value - a[0].value);
+      return [normalGroups[0][0]];
+    }
+
+    // SI HAY CUALQUIER CARTA NORMAL JUGABLE: JUGAR CARTA NORMAL Y GUARDAR EL 10 Y EL 2
     if (normalGroups.length > 0) {
+      // Priorizar parejas bajas/medias si hay mazo
+      const multiGroups = normalGroups.filter(g => g.length > 1 && g[0].rank !== 'A' && g[0].rank !== '7');
+      if (multiGroups.length > 0) {
+        multiGroups.sort((a, b) => (b.length - a.length) || (a[0].value - b[0].value));
+        return multiGroups[0];
+      }
+
+      // De lo contrario, la carta normal más baja posible (escalada suave)
       normalGroups.sort((a, b) => a[0].value - b[0].value);
       return normalGroups[0];
     }
 
-    if (tenGroup && pileLength >= 2) return tenGroup;
-    const twoGroup = legalGroups.find(g => g[0].rank === '2');
-    if (twoGroup) return twoGroup;
-    if (tenGroup) return tenGroup;
+    // Si el rival va a ganar y tenemos un 10: quemar para tener turno extra y evitar que gane sobre un 2
+    if (oppThreat >= 2 && tenGroup) {
+      return [tenGroup[0]];
+    }
+
+    // Si NO hay cartas normales jugables: usar el 2 o el 10 como salvavidas para no comer el montón
+    if (twoGroup) return [twoGroup[0]];
+    if (tenGroup) return [tenGroup[0]];
 
     return legalGroups[0];
   }
@@ -2675,31 +2687,35 @@
     if (legalFaceUp.length === 0) return null;
     if (legalFaceUp.length === 1) return legalFaceUp[0];
 
-    const nextOpponent = getNextActiveOpponent(room, botUid);
-    const threatLevel = evaluateOpponentThreat(nextOpponent);
+    const normalFaceUp = legalFaceUp.filter(c => c.rank !== '2' && c.rank !== '10');
+    const ten = legalFaceUp.find(c => c.rank === '10');
+    const two = legalFaceUp.find(c => c.rank === '2');
 
-    if (threatLevel >= 2 && nextOpponent) {
-      const ten = legalFaceUp.find(c => c.rank === '10');
-      if (ten) return ten;
+    const nextOpp = getNextActiveOpponent(room, botUid);
+    const oppThreat = evaluateOpponentThreat(nextOpp);
 
-      if (nextOpponent.handCount === 0 && nextOpponent.faceUp && nextOpponent.faceUp.length > 0) {
-        const oppOnlyHigh = nextOpponent.faceUp.every(c => c.value > 7 && c.rank !== '2');
-        const seven = legalFaceUp.find(c => c.rank === '7');
-        if (seven && oppOnlyHigh) return seven;
-      }
-
-      const sortedDesc = [...legalFaceUp].sort((a, b) => b.value - a.value);
-      return sortedDesc[0];
+    // Si el siguiente rival va a ganar: bloquear con la carta normal más alta
+    if (oppThreat >= 2 && normalFaceUp.length > 0) {
+      normalFaceUp.sort((a, b) => b.value - a.value);
+      return normalFaceUp[0];
     }
 
-    const normalFaceUp = legalFaceUp.filter(c => c.rank !== '2' && c.rank !== '10');
+    // Si hay cartas normales en mesa: jugar la más baja y guardar el 10
     if (normalFaceUp.length > 0) {
       normalFaceUp.sort((a, b) => a.value - b.value);
       return normalFaceUp[0];
     }
 
-    const sortedAsc = [...legalFaceUp].sort((a, b) => a.value - b.value);
-    return sortedAsc[0];
+    // Si el rival va a ganar y tenemos un 10: quemar
+    if (oppThreat >= 2 && ten) {
+      return ten;
+    }
+
+    // Solo si no hay cartas normales jugables:
+    if (two) return two;
+    if (ten) return ten;
+
+    return legalFaceUp[0];
   }
 
   // Recovers from any failed AI action (sync throw OR async/promise rejection)
@@ -2867,7 +2883,10 @@
       const legalGroups = Object.values(grouped).filter(cards => canPlayCard(cards[0], pileTop, isLower));
 
       if (legalGroups.length > 0) {
-        let chosenCards = chooseSmartHandGroup(legalGroups, room, botUid);
+        let chosenCards = (global.GuerraBotAI && typeof global.GuerraBotAI.chooseHandPlay === 'function')
+          ? global.GuerraBotAI.chooseHandPlay(legalGroups, room, botUid, hand)
+          : chooseSmartHandGroup(legalGroups, room, botUid);
+
         // Special rule: if draw deck is empty and faceUp has matching cards, play them together ONLY if all remaining cards in hand are of this rank!
         if (isDeckEmpty && faceUp.length > 0 && chosenCards.length > 0 && hand.every(c => c.rank === chosenCards[0].rank)) {
           const rank = chosenCards[0].rank;
@@ -2888,7 +2907,9 @@
     if (faceUp.length > 0) {
       const legalFaceUp = faceUp.filter(c => canPlayCard(c, pileTop, isLower));
       if (legalFaceUp.length > 0) {
-        const chosenCard = chooseSmartFaceUpCard(legalFaceUp, room, botUid);
+        const chosenCard = (global.GuerraBotAI && typeof global.GuerraBotAI.chooseFaceUpPlay === 'function')
+          ? global.GuerraBotAI.chooseFaceUpPlay(legalFaceUp, room, botUid, faceUp)
+          : chooseSmartFaceUpCard(legalFaceUp, room, botUid);
         const matchingFaceUp = faceUp.filter(c => c.rank === chosenCard.rank);
         executePlayAction(botUid, matchingFaceUp.length > 1 ? matchingFaceUp : [chosenCard]).catch(err => handleAITurnFailure(botUid, err));
         return;

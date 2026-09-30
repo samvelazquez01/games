@@ -2300,7 +2300,8 @@
     privateInfo.hand = sortCardsAscending(privateInfo.hand || []);
 
     // Check Special Rules & Burns
-    let newPile = [...(room.pile || []), ...playedCards];
+    const pileBeforePlay = [...(room.pile || [])];
+    let newPile = [...pileBeforePlay, ...playedCards];
     let newPileTop = firstCard;
     let isBurn = false;
     let is7Played = false;
@@ -2337,6 +2338,13 @@
     }
     else if (firstCard) {
       showActionBanner(`${player.name} jugó ${playedCards.map(c => c.name).join(', ')}.`);
+    }
+
+    // Notificar en vivo al motor de memoria de la IA qué cartas se jugaron o quemaron
+    if (global.GuerraBotAI && typeof global.GuerraBotAI.observePlay === 'function') {
+      try {
+        global.GuerraBotAI.observePlay(targetUid, playedCards, isBurn, pileBeforePlay, room, false);
+      } catch (e) {}
     }
 
     targetPlayer.handCount = (privateInfo.hand && privateInfo.hand.length) || 0;
@@ -2413,6 +2421,9 @@
 
     if (isGameOver) {
       if (aiTurnTimeout) { clearTimeout(aiTurnTimeout); aiTurnTimeout = null; }
+      if (global.GuerraBotAI && typeof global.GuerraBotAI.observeMatchEnd === 'function') {
+        try { global.GuerraBotAI.observeMatchEnd(room); } catch (e) {}
+      }
     }
 
     // Next Turn: Never give extra turn to finished players
@@ -2550,6 +2561,13 @@
       privateInfo = State.myPrivateCards;
     } else {
       privateInfo = State.teammatePrivateCards;
+    }
+
+    // Notificar en vivo al motor de memoria de la IA qué cartas exactas recogió este jugador
+    if (global.GuerraBotAI && typeof global.GuerraBotAI.observePickup === 'function') {
+      try {
+        global.GuerraBotAI.observePickup(targetUid, room.pile || [], extraFailedCard, room.pileTop, room.isLowerRestriction, room, false);
+      } catch (e) {}
     }
 
     const cardsToAdd = [...(room.pile || [])];
@@ -2753,12 +2771,25 @@
   // code path forgets to call checkAndTriggerAI after an action, the game
   // will self-heal on its own within ~2s instead of staying frozen until the
   // user happens to click something.
+  let aiTurnInFlightFor = null;
+  let aiTurnInFlightSince = 0;
+
+  function isAITurnBusy(uid) {
+    if (!aiTurnInFlightFor) return false;
+    if (Date.now() - aiTurnInFlightSince > 4200) {
+      aiTurnInFlightFor = null;
+      aiTurnInFlightSince = 0;
+      return false;
+    }
+    return uid ? aiTurnInFlightFor === uid : true;
+  }
+
   function startAIWatchdog() {
     if (aiWatchdogInterval) return;
     aiWatchdogInterval = setInterval(() => {
       const room = isSinglePlayerMode ? singlePlayerState : State.room;
       if (!room || room.status !== 'PLAYING') return;
-      if (aiTurnTimeout) return; // a turn is already scheduled, nothing to nudge
+      if (aiTurnTimeout || isAITurnBusy()) return; // a turn is already scheduled or consulting DeepSeek AI
       try {
         checkAndTriggerAI(room);
       } catch (err) {
@@ -2772,6 +2803,8 @@
       clearInterval(aiWatchdogInterval);
       aiWatchdogInterval = null;
     }
+    aiTurnInFlightFor = null;
+    aiTurnInFlightSince = 0;
   }
 
   function checkAndTriggerAI(room) {
@@ -2791,11 +2824,11 @@
 
     if (!isSinglePlayerMode && !isUserBotController(currentRoom)) return;
 
-    // Already scheduled for this exact bot? Don't stack duplicate timeouts.
-    if (aiTurnTimeout && aiTurnScheduledFor === activeUid) return;
+    // Already scheduled or currently awaiting DeepSeek AI for this exact bot? Don't stack duplicate turns.
+    if ((aiTurnTimeout && aiTurnScheduledFor === activeUid) || isAITurnBusy(activeUid)) return;
 
     if (aiTurnTimeout) clearTimeout(aiTurnTimeout);
-    const delay = 800 + Math.floor(Math.random() * 500);
+    const delay = 650 + Math.floor(Math.random() * 400);
     aiTurnScheduledFor = activeUid;
 
     aiTurnTimeout = setTimeout(() => {
@@ -2809,21 +2842,20 @@
         if (liveRoom && liveRoom.status === 'PLAYING') checkAndTriggerAI(liveRoom);
         return;
       }
-      try {
-        executeAITurn(activeUid);
-      } catch (err) {
+      Promise.resolve(executeAITurn(activeUid)).catch(err => {
         handleAITurnFailure(activeUid, err);
-      }
+      });
     }, delay);
   }
 
-  function executeAITurn(botUid) {
+  async function executeAITurn(botUid) {
     const room = isSinglePlayerMode ? singlePlayerState : State.room;
     if (!room || room.status === 'FINISHED') return;
 
     const player = room.players && room.players[botUid];
     if (!player || isPlayerCompleted(player, room)) return;
     if (room.activePlayerUid && room.activePlayerUid !== botUid) return;
+    if (isAITurnBusy(botUid)) return;
 
     let targetUid = botUid;
     const isTeamMode = (room.gameMode === '2v2');
@@ -2883,9 +2915,31 @@
       const legalGroups = Object.values(grouped).filter(cards => canPlayCard(cards[0], pileTop, isLower));
 
       if (legalGroups.length > 0) {
-        let chosenCards = (global.GuerraBotAI && typeof global.GuerraBotAI.chooseHandPlay === 'function')
-          ? global.GuerraBotAI.chooseHandPlay(legalGroups, room, botUid, hand)
-          : chooseSmartHandGroup(legalGroups, room, botUid);
+        aiTurnInFlightFor = botUid;
+        aiTurnInFlightSince = Date.now();
+        let chosenCards = null;
+        try {
+          if (global.GuerraBotAI && typeof global.GuerraBotAI.chooseHandPlayAsync === 'function') {
+            chosenCards = await global.GuerraBotAI.chooseHandPlayAsync(legalGroups, room, botUid, hand);
+          } else if (global.GuerraBotAI && typeof global.GuerraBotAI.chooseHandPlay === 'function') {
+            chosenCards = global.GuerraBotAI.chooseHandPlay(legalGroups, room, botUid, hand);
+          } else {
+            chosenCards = chooseSmartHandGroup(legalGroups, room, botUid);
+          }
+        } finally {
+          aiTurnInFlightFor = null;
+          aiTurnInFlightSince = 0;
+        }
+
+        // Re-verificar que el turno siga perteneciendo a este bot tras la consulta asíncrona a DeepSeek
+        const liveRoom = isSinglePlayerMode ? singlePlayerState : State.room;
+        if (!liveRoom || liveRoom.status !== 'PLAYING' || (liveRoom.activePlayerUid && liveRoom.activePlayerUid !== botUid)) {
+          return;
+        }
+
+        if (!chosenCards || chosenCards.length === 0) {
+          chosenCards = legalGroups[0];
+        }
 
         // Special rule: if draw deck is empty and faceUp has matching cards, play them together ONLY if all remaining cards in hand are of this rank!
         if (isDeckEmpty && faceUp.length > 0 && chosenCards.length > 0 && hand.every(c => c.rank === chosenCards[0].rank)) {
@@ -2907,9 +2961,28 @@
     if (faceUp.length > 0) {
       const legalFaceUp = faceUp.filter(c => canPlayCard(c, pileTop, isLower));
       if (legalFaceUp.length > 0) {
-        const chosenCard = (global.GuerraBotAI && typeof global.GuerraBotAI.chooseFaceUpPlay === 'function')
-          ? global.GuerraBotAI.chooseFaceUpPlay(legalFaceUp, room, botUid, faceUp)
-          : chooseSmartFaceUpCard(legalFaceUp, room, botUid);
+        aiTurnInFlightFor = botUid;
+        aiTurnInFlightSince = Date.now();
+        let chosenCard = null;
+        try {
+          if (global.GuerraBotAI && typeof global.GuerraBotAI.chooseFaceUpPlayAsync === 'function') {
+            chosenCard = await global.GuerraBotAI.chooseFaceUpPlayAsync(legalFaceUp, room, botUid, faceUp);
+          } else if (global.GuerraBotAI && typeof global.GuerraBotAI.chooseFaceUpPlay === 'function') {
+            chosenCard = global.GuerraBotAI.chooseFaceUpPlay(legalFaceUp, room, botUid, faceUp);
+          } else {
+            chosenCard = chooseSmartFaceUpCard(legalFaceUp, room, botUid);
+          }
+        } finally {
+          aiTurnInFlightFor = null;
+          aiTurnInFlightSince = 0;
+        }
+
+        const liveRoom = isSinglePlayerMode ? singlePlayerState : State.room;
+        if (!liveRoom || liveRoom.status !== 'PLAYING' || (liveRoom.activePlayerUid && liveRoom.activePlayerUid !== botUid)) {
+          return;
+        }
+
+        if (!chosenCard) chosenCard = legalFaceUp[0];
         const matchingFaceUp = faceUp.filter(c => c.rank === chosenCard.rank);
         executePlayAction(botUid, matchingFaceUp.length > 1 ? matchingFaceUp : [chosenCard]).catch(err => handleAITurnFailure(botUid, err));
         return;
